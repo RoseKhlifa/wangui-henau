@@ -199,6 +199,25 @@ export const adminApi = {
     request<SchoolCheckinStatus>(
       '/rosekhlifa/users/' + encodeURIComponent(id) + '/checkin-status',
     ),
+
+  // POST a fully customisable sign payload (geofence debugging). Returns the
+  // raw request body that hit the wire plus the school's full response —
+  // envelope code/message/data and the unparsed body. Doesn't write a record.
+  signDebug: (id: string, body: Record<string, unknown>) =>
+    request<{
+      sentRequest: unknown
+      dryRun: boolean
+      ok?: boolean
+      httpStatus?: number
+      envelopeCode?: number
+      envelopeMessage?: string
+      envelopeData?: unknown
+      rawBody?: string
+      error?: string
+    }>('/rosekhlifa/users/' + encodeURIComponent(id) + '/sign-debug', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   refreshUserToken: (id: string, auth: SchoolAuthPayload) =>
     request<{ ok: boolean; expiresAt: number }>(
       '/rosekhlifa/users/' + encodeURIComponent(id) + '/token',

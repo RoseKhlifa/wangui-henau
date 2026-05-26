@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"slices"
@@ -588,9 +589,36 @@ func (m *Multi) SignOnce(ctx context.Context, u *store.User) SignResult {
 		if api.IsAuthExpired(err) {
 			return SignResult{Status: "failed", Message: "token 已失效，请更新"}
 		}
+		// On any non-auth failure, log the full school response so admin
+		// can see "data" / "rawBody" in docker logs. This is the only way
+		// to find out which field/value the school rejected without doing
+		// a fresh OAuth dance in DevTools.
+		var ae *api.APIError
+		if errors.As(err, &ae) {
+			m.log.Warn("school sign rejected — full response",
+				"user", u.UserID,
+				"http_status", ae.HTTPStatus,
+				"code", ae.Code,
+				"message", ae.Message,
+				"data", string(ae.Data),
+				"raw_body", truncateForLog(ae.RawBody, 2000),
+				"sent_lat", req.Latitude,
+				"sent_lng", req.Longitude,
+				"sent_coord_type", req.CoordType,
+			)
+			return SignResult{Status: "failed", Message: ae.Message}
+		}
 		return SignResult{Status: "failed", Message: err.Error()}
 	}
 	return SignResult{Status: "success", Message: "签到成功"}
+}
+
+func truncateForLog(b []byte, n int) string {
+	s := string(b)
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
 }
 
 func nonEmpty(s, fallback string) string {

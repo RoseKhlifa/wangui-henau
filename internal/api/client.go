@@ -43,9 +43,12 @@ type envelope struct {
 
 // APIError is returned when the backend reports code != 200.
 type APIError struct {
-	Code    int
-	Message string
-	Path    string
+	Code       int
+	Message    string
+	Path       string
+	HTTPStatus int             // raw HTTP status from the school server
+	Data       json.RawMessage // raw `data` field (school sometimes attaches diagnostics here)
+	RawBody    []byte          // full response body — kept for verbose diagnostic logging
 }
 
 func (e *APIError) Error() string {
@@ -116,7 +119,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			code = resp.StatusCode
 		}
-		return &APIError{Code: code, Message: env.Message, Path: path}
+		return &APIError{
+			Code:       code,
+			Message:    env.Message,
+			Path:       path,
+			HTTPStatus: resp.StatusCode,
+			Data:       env.Data,
+			RawBody:    raw,
+		}
 	}
 	if out != nil && len(env.Data) > 0 && !bytes.Equal(env.Data, []byte("null")) {
 		if err := json.Unmarshal(env.Data, out); err != nil {
