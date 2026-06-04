@@ -9,6 +9,8 @@ import {
   ArrowDownToLine,
   CheckCircle2,
   XCircle,
+  Layers,
+  Compass,
 } from 'lucide-vue-next'
 import type { AdminUser } from '../../types'
 import { adminApi } from '../../api'
@@ -57,6 +59,152 @@ interface DebugResult {
   error?: string
 }
 const result = ref<DebugResult | null>(null)
+
+// Batch-mode results: server runs all 7 presets sequentially, this is the
+// array it returns (stops on first ok). One row per attempt.
+interface BatchResult {
+  label: string
+  sentRequest: unknown
+  ok: boolean
+  httpStatus?: number
+  envelopeCode?: number
+  envelopeMessage?: string
+  envelopeData?: unknown
+  rawBody?: string
+  error?: string
+}
+const batchResults = ref<BatchResult[] | null>(null)
+const batchRunning = ref(false)
+
+// Coordinate sweep: probe center + 8 directions × 3 radii (50/200/500m) for
+// the school's actual geofence center. Returns one row per probe.
+interface SweepResult {
+  direction: string
+  distanceM: number
+  latitude: number
+  longitude: number
+  ok: boolean
+  httpStatus?: number
+  envelopeCode?: number
+  envelopeMessage?: string
+}
+const sweepResults = ref<SweepResult[] | null>(null)
+const sweepCenter = ref<{ lat: number; lng: number } | null>(null)
+const sweepRunning = ref(false)
+
+// Sweep radii (metres). 3 input boxes user can tune. Default: close-range.
+const sweepRadii = ref<[string, string, string]>(['50', '200', '500'])
+
+const SWEEP_PRESETS: { label: string; radii: [string, string, string]; note: string }[] = [
+  { label: '近距 (GPS / 坐标系偏移)', radii: ['50', '200', '500'], note: '50/200/500m，找 GPS 误差或 WGS84→GCJ02 偏移' },
+  { label: '中距 (点错隔壁楼)', radii: ['200', '1000', '3000'], note: '0.2/1/3km，找校区内点错位置' },
+  { label: '远距 (点错校区)', radii: ['1000', '5000', '20000'], note: '1/5/20km，找完全错误的校区' },
+]
+
+async function runSweep() {
+  if (!selectedId.value) {
+    showToast('err', '请先选择用户')
+    return
+  }
+  if (sweepRunning.value) return
+  const radii = sweepRadii.value.map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0 && n <= 100000)
+  if (radii.length === 0) {
+    showToast('err', '请填写至少 1 个有效半径 (米)')
+    return
+  }
+  if (!confirm(
+    `坐标遍历：8 方向 × ${radii.length} 个半径 = ${1 + 8 * radii.length} 个点。\n` +
+    `半径：${radii.join(' / ')}m\n\n` +
+    `找到学校接受的位置就停。可能触发风控，谨慎使用。\n\n确认继续？`,
+  )) return
+  sweepRunning.value = true
+  sweepResults.value = null
+  sweepCenter.value = null
+  result.value = null
+  batchResults.value = null
+  try {
+    const body: Record<string, unknown> = { radii }
+    const lat = parseNum(form.value.latitude)
+    const lng = parseNum(form.value.longitude)
+    if (lat !== null) body.latitude = lat
+    if (lng !== null) body.longitude = lng
+    const res = await adminApi.signDebugSweep(selectedId.value, body)
+    sweepResults.value = res.results
+    sweepCenter.value = { lat: res.centerLat, lng: res.centerLng }
+    const winner = res.results.find(r => r.ok)
+    if (winner) {
+      showToast('ok', `✅ 找到了：${winner.direction === 'CENTER' ? '中心点' : winner.direction + ' ' + winner.distanceM + 'm'}`)
+    } else {
+      showToast('err', `全部 ${res.results.length} 个点被拒 —— 围栏更远或锁更严`)
+    }
+  } catch (e: any) {
+    showToast('err', e.message || '坐标遍历失败')
+  } finally {
+    sweepRunning.value = false
+  }
+}
+
+function applySweepPreset(p: typeof SWEEP_PRESETS[0]) {
+  sweepRadii.value = [...p.radii]
+}
+
+// Distinct distances in the most recent sweep result, sorted asc. Used as
+// the row labels of the result grid.
+const sweepDistances = computed<number[]>(() => {
+  if (!sweepResults.value) return []
+  const set = new Set<number>()
+  for (const r of sweepResults.value) set.add(r.distanceM)
+  return Array.from(set).sort((a, b) => a - b)
+})
+
+// Direction → degree for visualizing on a clock-face.
+const DIR_DEGS: Record<string, number> = {
+  N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315, CENTER: 0,
+}
+
+function dirChip(dir: string): string {
+  if (dir === 'CENTER') return '●'
+  const arrows: Record<string, string> = {
+    N: '↑', NE: '↗', E: '→', SE: '↘', S: '↓', SW: '↙', W: '←', NW: '↖',
+  }
+  return arrows[dir] || dir
+}
+
+async function runBatch() {
+  if (!selectedId.value) {
+    showToast('err', '请先选择用户')
+    return
+  }
+  if (batchRunning.value) return
+  if (!confirm('一口气跑 7 个预设？\n\n找到能让学校接受的那一个就停。期间这个用户会有最多 7 次连续 /checkin 请求打到学校，可能短时间内被风控。')) return
+  batchRunning.value = true
+  batchResults.value = null
+  result.value = null
+  try {
+    // Body: pass form's lat/lng/address fields as overrides (if filled).
+    const body: Record<string, unknown> = {}
+    const lat = parseNum(form.value.latitude)
+    const lng = parseNum(form.value.longitude)
+    if (lat !== null) body.latitude = lat
+    if (lng !== null) body.longitude = lng
+    if (form.value.locationAddress.trim()) body.locationAddress = form.value.locationAddress.trim()
+    if (form.value.city.trim()) body.city = form.value.city.trim()
+    if (form.value.road.trim()) body.road = form.value.road.trim()
+    if (form.value.poi.trim()) body.poi = form.value.poi.trim()
+    const res = await adminApi.signDebugBatch(selectedId.value, body)
+    batchResults.value = res.results
+    const winner = res.results.find(r => r.ok)
+    if (winner) {
+      showToast('ok', `✅ 找到了：${winner.label}`)
+    } else {
+      showToast('err', '7 个预设全部失败 —— 需要换思路')
+    }
+  } catch (e: any) {
+    showToast('err', e.message || '批量调试失败')
+  } finally {
+    batchRunning.value = false
+  }
+}
 
 async function loadUsers() {
   loadingUsers.value = true
@@ -370,6 +518,54 @@ const PRESETS = [
           >
             清空
           </button>
+          <!-- Sweep radii inputs + presets — collapsible to keep the action row clean -->
+          <details class="inline-block">
+            <summary class="cursor-pointer text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200 px-2 py-2">
+              半径 ({{ sweepRadii.join('/') }}m)
+            </summary>
+            <div class="absolute mt-1 right-0 z-10 w-64 bg-white dark:bg-zinc-900 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg shadow-xl p-3 space-y-2">
+              <p class="text-[10px] text-zinc-500 uppercase tracking-wide">3 个半径 (米)</p>
+              <div class="grid grid-cols-3 gap-1">
+                <input v-model="sweepRadii[0]" type="text"
+                  class="bg-zinc-50 dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded px-2 py-1 text-xs font-mono-token focus-ring text-zinc-900 dark:text-zinc-200" />
+                <input v-model="sweepRadii[1]" type="text"
+                  class="bg-zinc-50 dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded px-2 py-1 text-xs font-mono-token focus-ring text-zinc-900 dark:text-zinc-200" />
+                <input v-model="sweepRadii[2]" type="text"
+                  class="bg-zinc-50 dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded px-2 py-1 text-xs font-mono-token focus-ring text-zinc-900 dark:text-zinc-200" />
+              </div>
+              <p class="text-[10px] text-zinc-500 uppercase tracking-wide pt-1">预设</p>
+              <button
+                v-for="p in SWEEP_PRESETS"
+                :key="p.label"
+                type="button"
+                @click="applySweepPreset(p)"
+                class="w-full text-left px-2 py-1.5 rounded text-[11px] hover:bg-emerald-500/10 text-zinc-700 dark:text-zinc-300"
+              >
+                <span class="font-medium">{{ p.label }}</span>
+                <br />
+                <span class="text-[10px] text-zinc-500">{{ p.note }}</span>
+              </button>
+            </div>
+          </details>
+
+          <button
+            @click="runSweep"
+            :disabled="sweepRunning || !selectedId"
+            class="inline-flex items-center gap-1.5 bg-blue-500 hover:bg-blue-400 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            title="以当前 lat/lng 为中心，按上面 3 个半径向 8 方向扫描，找学校围栏中心"
+          >
+            <Compass class="w-3.5 h-3.5" :class="sweepRunning ? 'wangui-spin' : ''" />
+            {{ sweepRunning ? '扫描中…' : '经纬度遍历' }}
+          </button>
+          <button
+            @click="runBatch"
+            :disabled="batchRunning || !selectedId"
+            class="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            title="一口气跑全部 7 个字段预设，找到能签到的那个就停"
+          >
+            <Layers class="w-3.5 h-3.5" :class="batchRunning ? 'wangui-spin' : ''" />
+            {{ batchRunning ? '批量中…' : '一键试 7 个' }}
+          </button>
           <button
             @click="run"
             :disabled="running || !selectedId"
@@ -396,6 +592,130 @@ const PRESETS = [
           </li>
         </ul>
       </aside>
+    </section>
+
+    <!-- Sweep results — coordinate grid with hit highlight -->
+    <section v-if="sweepResults && sweepResults.length > 0" class="space-y-2">
+      <div class="text-xs text-zinc-500 px-1">
+        坐标遍历 · 中心点 (<span class="font-mono-token">{{ sweepCenter?.lat.toFixed(6) }}, {{ sweepCenter?.lng.toFixed(6) }}</span>)
+        · 试 {{ sweepResults.length }} 个点
+        <span v-if="sweepResults.some(r => r.ok)" class="ml-2 text-emerald-500 font-medium">
+          ✅ 找到能签的位置
+        </span>
+        <span v-else class="ml-2 text-red-500 font-medium">
+          全部被拒
+        </span>
+      </div>
+
+      <!-- Quick-glance grid: rows = distance, columns = direction -->
+      <div class="rounded-xl bg-white/85 dark:bg-zinc-900/60 ring-1 ring-black/[0.08] dark:ring-white/[0.06] p-4 overflow-x-auto">
+        <table class="text-xs tabular-nums w-full">
+          <thead>
+            <tr class="text-[10px] text-zinc-500 uppercase tracking-wide">
+              <th class="px-2 py-1 text-left">距离</th>
+              <th v-for="d in ['CENTER','N','NE','E','SE','S','SW','W','NW']" :key="d" class="px-2 py-1 text-center">
+                {{ dirChip(d) }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="dist in sweepDistances" :key="dist" class="border-t border-black/[0.05] dark:border-white/[0.04]">
+              <td class="px-2 py-1.5 text-zinc-500">{{ dist === 0 ? '中心' : dist >= 1000 ? (dist/1000) + 'km' : dist + 'm' }}</td>
+              <td v-for="d in ['CENTER','N','NE','E','SE','S','SW','W','NW']" :key="d" class="px-1 py-1 text-center">
+                <template v-if="(dist === 0 && d === 'CENTER') || (dist !== 0 && d !== 'CENTER')">
+                  <span
+                    v-if="sweepResults.find(r => r.direction === d && r.distanceM === dist)"
+                    class="inline-flex items-center justify-center w-7 h-6 rounded text-[10px] font-medium"
+                    :class="sweepResults.find(r => r.direction === d && r.distanceM === dist)?.ok
+                      ? 'bg-emerald-500/30 text-emerald-700 dark:text-emerald-200 ring-2 ring-emerald-500'
+                      : sweepResults.find(r => r.direction === d && r.distanceM === dist)?.envelopeMessage?.includes('围栏')
+                        ? 'bg-red-500/15 text-red-700 dark:text-red-300 ring-1 ring-red-500/30'
+                        : sweepResults.find(r => r.direction === d && r.distanceM === dist)?.envelopeMessage?.includes('打卡时间')
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30'
+                          : 'bg-zinc-500/15 text-zinc-500 ring-1 ring-zinc-500/30'"
+                    :title="sweepResults.find(r => r.direction === d && r.distanceM === dist)?.envelopeMessage"
+                  >
+                    {{ sweepResults.find(r => r.direction === d && r.distanceM === dist)?.ok ? '✓' : '✗' }}
+                  </span>
+                  <span v-else class="text-zinc-400">·</span>
+                </template>
+                <template v-else>—</template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Successful hit detail -->
+      <div
+        v-for="r in sweepResults.filter(x => x.ok)"
+        :key="r.direction + r.distanceM"
+        class="rounded-xl bg-emerald-500/[0.08] ring-1 ring-emerald-500/40 p-4 text-sm"
+      >
+        <div class="flex items-center gap-2 mb-2">
+          <CheckCircle2 class="w-4 h-4 text-emerald-500" />
+          <span class="font-semibold">✅ 签到成功 · {{ r.direction }} {{ r.distanceM === 0 ? '中心点' : r.distanceM + 'm' }}</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+          <div>
+            <p class="text-[10px] text-zinc-500 uppercase tracking-wide">学校接受的坐标</p>
+            <p class="font-mono-token">{{ r.latitude.toFixed(6) }}, {{ r.longitude.toFixed(6) }}</p>
+          </div>
+          <div>
+            <p class="text-[10px] text-zinc-500 uppercase tracking-wide">距你当前保存坐标</p>
+            <p class="font-mono-token">{{ r.distanceM === 0 ? '中心 (无偏移)' : r.distanceM + 'm 向 ' + r.direction }}</p>
+          </div>
+        </div>
+        <div class="mt-3 p-3 rounded-lg bg-white dark:bg-zinc-950 ring-1 ring-emerald-500/20 text-[11px] text-zinc-600 dark:text-zinc-400">
+          建议：把宿舍楼管理里这个楼的坐标改成 <span class="font-mono-token text-emerald-500">{{ r.latitude.toFixed(6) }}, {{ r.longitude.toFixed(6) }}</span> 应该就好了。
+        </div>
+      </div>
+    </section>
+
+    <!-- Batch results — one card per preset, OK ones glow green -->
+    <section v-if="batchResults && batchResults.length > 0" class="space-y-2">
+      <div class="text-xs text-zinc-500 px-1">
+        共试 {{ batchResults.length }} 个预设 ·
+        <span v-if="batchResults.some(r => r.ok)" class="text-emerald-500 font-medium">
+          已找到能签的预设 ✅（学校接受后剩余预设跳过）
+        </span>
+        <span v-else class="text-red-500 font-medium">7 个预设全部被拒</span>
+      </div>
+      <article
+        v-for="(r, idx) in batchResults"
+        :key="idx"
+        class="rounded-xl ring-1 overflow-hidden"
+        :class="r.ok
+          ? 'bg-emerald-500/[0.08] ring-emerald-500/40'
+          : 'bg-red-500/[0.05] ring-red-500/30'"
+      >
+        <header class="px-4 py-2.5 border-b border-black/[0.05] dark:border-white/[0.04] flex items-center gap-2 flex-wrap">
+          <CheckCircle2 v-if="r.ok" class="w-4 h-4 text-emerald-500 shrink-0" />
+          <XCircle v-else class="w-4 h-4 text-red-500 shrink-0" />
+          <h3 class="text-sm font-semibold">{{ r.label }}</h3>
+          <span v-if="r.envelopeMessage" class="text-xs text-zinc-500">— {{ r.envelopeMessage }}</span>
+          <div class="flex-1"></div>
+          <span v-if="r.envelopeCode" class="text-[11px] text-zinc-500 font-mono-token">code={{ r.envelopeCode }}</span>
+        </header>
+        <details class="px-4 py-3 text-xs">
+          <summary class="cursor-pointer text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200">查看请求体 / 学校响应</summary>
+          <div class="mt-2 space-y-2">
+            <div>
+              <p class="text-[10px] text-zinc-500 tracking-wide uppercase mb-1">sent request</p>
+              <pre class="text-[10px] font-mono-token bg-white dark:bg-zinc-950 ring-1 ring-black/[0.06] dark:ring-white/[0.05] rounded-md p-2 overflow-x-auto leading-relaxed">{{ JSON.stringify(r.sentRequest, null, 2) }}</pre>
+            </div>
+            <div v-if="r.envelopeData !== undefined && r.envelopeData !== null">
+              <p class="text-[10px] text-zinc-500 tracking-wide uppercase mb-1">envelope.data</p>
+              <pre class="text-[10px] font-mono-token bg-white dark:bg-zinc-950 ring-1 ring-black/[0.06] dark:ring-white/[0.05] rounded-md p-2 overflow-x-auto leading-relaxed">{{ JSON.stringify(r.envelopeData, null, 2) }}</pre>
+            </div>
+            <div v-if="r.rawBody">
+              <p class="text-[10px] text-zinc-500 tracking-wide uppercase mb-1">raw response body</p>
+              <pre class="text-[10px] font-mono-token bg-white dark:bg-zinc-950 ring-1 ring-black/[0.06] dark:ring-white/[0.05] rounded-md p-2 overflow-x-auto leading-relaxed">{{ r.rawBody }}</pre>
+            </div>
+            <div v-if="r.error" class="text-xs text-red-500">{{ r.error }}</div>
+          </div>
+        </details>
+      </article>
     </section>
 
     <!-- Result -->

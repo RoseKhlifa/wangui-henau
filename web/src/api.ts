@@ -203,6 +203,51 @@ export const adminApi = {
   // POST a fully customisable sign payload (geofence debugging). Returns the
   // raw request body that hit the wire plus the school's full response —
   // envelope code/message/data and the unparsed body. Doesn't write a record.
+  // Coordinate sweep: 25 points (center + 8 directions × 3 radii at 50/200/500m)
+  // around the saved lat/lng. Stops on first success. Probes the school's
+  // geofence boundary by brute-forcing nearby points.
+  signDebugSweep: (id: string, body: Record<string, unknown>) =>
+    request<{
+      results: Array<{
+        direction: string
+        distanceM: number
+        latitude: number
+        longitude: number
+        ok: boolean
+        httpStatus?: number
+        envelopeCode?: number
+        envelopeMessage?: string
+      }>
+      total: number
+      centerLat: number
+      centerLng: number
+    }>('/rosekhlifa/users/' + encodeURIComponent(id) + '/sign-debug-sweep', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  // One-shot batch: server runs 7 preset payloads sequentially, stops on
+  // first success. Address fields default to the user's saved values; can
+  // be overridden via the body. Returns one entry per attempt.
+  signDebugBatch: (id: string, body: Record<string, unknown>) =>
+    request<{
+      results: Array<{
+        label: string
+        sentRequest: unknown
+        ok: boolean
+        httpStatus?: number
+        envelopeCode?: number
+        envelopeMessage?: string
+        envelopeData?: unknown
+        rawBody?: string
+        error?: string
+      }>
+      total: number
+    }>('/rosekhlifa/users/' + encodeURIComponent(id) + '/sign-debug-batch', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   signDebug: (id: string, body: Record<string, unknown>) =>
     request<{
       sentRequest: unknown
