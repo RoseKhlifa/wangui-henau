@@ -16,10 +16,9 @@ import type { AdminUser } from '../../types'
 import { adminApi } from '../../api'
 import { showToast } from '../../lib/toast'
 
-// Diagnostic console for the 2026-05 geofence rejection. Pick a user, tweak
+// Diagnostic console for location rejection responses. Pick a user, tweak
 // any field of /checkin's request body, fire it. School's raw response
-// (envelope code/message/data + raw body) shows below so admin can iterate
-// and find what the new validator wants.
+// (envelope code/message/data + raw body) shows below for comparison.
 
 const users = ref<AdminUser[]>([])
 const loadingUsers = ref(false)
@@ -315,7 +314,7 @@ function clearAll() {
   result.value = null
 }
 
-// Presets — quickly try common variations from the 2026-05 geofence fix list.
+// Presets — quickly compare historical location-diagnostic variations.
 const PRESETS = [
   {
     label: '裸最小（仅 rule+lat+lng）',
@@ -377,7 +376,7 @@ const PRESETS = [
         签到调试
       </h1>
       <p class="text-sm text-zinc-500 mt-1">
-        排查 2026-05 学校加围栏后的 「当前位置不在签到围栏范围内」 错误。
+        排查「当前位置不在签到围栏范围内」等位置相关响应。历史上该错误曾由服务器出口 IP 与签到位置相距过远引起。
         选个用户 → 调字段 → 点跑 → 看学校 raw 回应。<strong>不写记录、不发通知</strong>。
       </p>
     </header>
@@ -429,12 +428,12 @@ const PRESETS = [
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">latitude</label>
-            <input v-model="form.latitude" type="text" placeholder="如 34.78912"
+            <input v-model="form.latitude" type="text" placeholder="如 34.000000"
               class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-md px-2 py-1.5 text-sm font-mono-token focus-ring text-zinc-900 dark:text-zinc-200" />
           </div>
           <div>
             <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">longitude</label>
-            <input v-model="form.longitude" type="text" placeholder="如 113.65432"
+            <input v-model="form.longitude" type="text" placeholder="如 113.000000"
               class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-md px-2 py-1.5 text-sm font-mono-token focus-ring text-zinc-900 dark:text-zinc-200" />
           </div>
           <div>

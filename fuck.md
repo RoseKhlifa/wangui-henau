@@ -43,14 +43,14 @@ GET /api/auth/user
   "code": 200,
   "data": {
     "accountStatus": 1,
-    "userClass": "数科23-7",
+    "userClass": "示例班级",
     "userStatus": 0,
     "gender": 0,
     "roles": [{ "roleId": 2, "roleCode": "STUDENT", "roleName": "学生" }],
     "userAvatarUrl": "https://thirdwx.qlogo.cn/...",
-    "userSection": "软件学院",
-    "userName": "姚依涛",
-    "userNumber": "2321211204"
+    "userSection": "示例学院",
+    "userName": "示例用户",
+    "userNumber": "STUDENT_ID"
   }
 }
 ```
@@ -120,14 +120,14 @@ POST /api/checkin
 ```json
 {
   "ruleId": 1,
-  "latitude": 34.756842,
-  "longitude": 113.665412,
+  "latitude": 34.000000,
+  "longitude": 113.000000,
   "deviceModel": "iPhone",
   "deviceSystem": "iOS",
-  "locationAddress": "河南省郑州市金水区文化路95号河南农业大学",
-  "city": "郑州市",
-  "road": "文化路",
-  "poi": "河南农业大学"
+  "locationAddress": "示例地址",
+  "city": "示例城市",
+  "road": "示例道路",
+  "poi": "示例地点"
 }
 ```
 
@@ -143,14 +143,13 @@ POST /api/checkin
 | road | string | 道路名 |
 | poi | string | 兴趣点 |
 
-**安全分析:**
+**已知校验边界:**
 
-所有定位数据均由前端采集后直接提交，服务端无二次校验：
-- 无 GPS 数据签名/加密机制
-- 无服务端反向验证坐标真实性
-- 无 IP 地址与 GPS 坐标的交叉校验
-- 地址字段均为前端自行调天地图 API 拼装，非服务端计算
-- `deviceModel`/`deviceSystem` 根据 UA 硬编码，可任意伪造
+- 当前请求格式中未观察到 GPS 数据签名或设备证明字段。
+- 历史部署曾因服务器出口 IP 位于海外、与提交位置相距过远而收到围栏拒绝，说明服务端可能进行来源 IP 与位置的一致性检查。
+- 地址字段由前端生成并提交，但是否参与服务端判定尚未确认。
+- `deviceModel`/`deviceSystem` 是普通请求字段；服务端是否结合其他信号校验尚未确认。
+- 不应仅根据请求体结构推断服务端没有风控或位置真实性校验。
 
 **curl 签到示例:**
 
@@ -160,14 +159,14 @@ curl -X POST "https://xhbcs.henau.edu.cn/api/checkin" \
   -H "Content-Type: application/json" \
   -d '{
     "ruleId": 1,
-    "latitude": 34.756842,
-    "longitude": 113.665412,
+    "latitude": 34.000000,
+    "longitude": 113.000000,
     "deviceModel": "iPhone",
     "deviceSystem": "iOS",
-    "locationAddress": "河南省郑州市金水区文化路95号河南农业大学",
-    "city": "郑州市",
-    "road": "文化路",
-    "poi": "河南农业大学"
+    "locationAddress": "示例地址",
+    "city": "示例城市",
+    "road": "示例道路",
+    "poi": "示例地点"
   }'
 ```
 

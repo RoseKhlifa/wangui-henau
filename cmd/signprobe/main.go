@@ -1,13 +1,14 @@
-// signprobe — one-shot debug script for the 2026-05 geofence rejection.
+// signprobe — historical one-shot diagnostic for location rejection responses.
 //
 // Usage:
 //   go run ./cmd/signprobe -code <oauth_code>
 //   go run ./cmd/signprobe -token <existing_jwt>
 //
 // Exchanges a fresh wechat-OAuth code for the school's JWT (or reuses one),
-// queries /auth/user + /checkin/available-rules, then hammers /checkin with
+// queries /auth/user + /checkin/available-rules, then tries /checkin with
 // several payload shapes, printing the full response body for each so we can
-// figure out which field combination the new server-side validator wants.
+// compare field combinations. The original rejection was later attributed to
+// the deployment server's overseas egress IP, not a confirmed payload change.
 //
 // Doesn't write to wangui's DB. Doesn't send notifications. Pure curl-with-
 // preset.

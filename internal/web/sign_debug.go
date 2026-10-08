@@ -52,9 +52,8 @@ type signDebugReq struct {
 //
 // Iteratively probe the school's /checkin endpoint with arbitrary payload
 // tweaks. Returns the full request body sent, the HTTP status, the parsed
-// envelope, and the raw response body — letting admin discover which field
-// the new geofence implementation actually rejects on, without having to
-// open mobile DevTools.
+// envelope, and the raw response body so an admin can compare location-related
+// responses without having to open mobile DevTools.
 //
 // Unlike the regular /sign-now path, this does NOT persist a sign_records
 // row or fire notifications: it's pure diagnostic.
@@ -369,11 +368,10 @@ func (h *handlers) adminSignDebugBatch(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/v1/rosekhlifa/users/{id}/sign-debug-sweep
 //
-// Localize the school's geofence by sweeping coordinates. School now shows
-// a 10m accuracy indicator on its H5 frontend — likely the geofence is
-// just a tight circle around the dorm's true coordinates. Our saved
-// coords might be off by tens of metres (WGS84 vs GCJ02 offset, or an
-// imprecise pin on the map).
+// Historical coordinate diagnostic. A location rejection can also be caused
+// by source-IP geolocation mismatch, which this sweep cannot diagnose. Saved
+// coordinates can independently be off because of WGS84/GCJ02 conversion or
+// an imprecise pin on the map.
 //
 // We sweep an outward spiral: center, then 8 compass points at radius
 // 50m, 200m, 500m (24 outer points + 1 center = 25 attempts). Stop on

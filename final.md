@@ -408,8 +408,8 @@ CREATE TABLE web_sessions (
 // 仅坐标模式 (默认, dorm.send_address_fields=false)
 {
   "ruleId": 1,
-  "latitude": 34.13797,
-  "longitude": 113.80279,
+  "latitude": 34.00000,
+  "longitude": 113.00000,
   "deviceModel": "iPhone",
   "deviceSystem": "iOS"
 }
@@ -417,8 +417,8 @@ CREATE TABLE web_sessions (
 // 含地址模式 (dorm.send_address_fields=true)
 {
   "ruleId": 1,
-  "latitude": 34.13797,
-  "longitude": 113.80279,
+  "latitude": 34.00000,
+  "longitude": 113.00000,
   "deviceModel": "iPhone",
   "deviceSystem": "iOS",
   "locationAddress": "...",
@@ -477,7 +477,7 @@ env vars:
 
 ```bash
 # 终端 1：起后端（生产路径）
-WANGUI_ADMIN_PASS=RoseKhlifa880818 ./wangui.exe serve
+WANGUI_ADMIN_PASS=<生成的随机强密码> ./wangui.exe serve
 
 # 终端 2：起 Vite dev server（前端热更）
 cd web
@@ -498,14 +498,14 @@ cd ..  && go build -o wangui.exe ./cmd/wangui
 | 项 | 值 |
 |---|---|
 | **监听端口** | `127.0.0.1:4444` |
-| **管理员密码** | `RoseKhlifa880818`（生产请改） |
+| **管理员密码** | 仅从未提交的 `.env` 读取随机强密码 |
 | **管理员路径** | `/rosekhlifa/login` |
 | **学校签到窗口** | 22:00 – 22:30 |
 | **新用户默认触发** | 22:02 + 0~180s jitter |
 | **默认重试** | 3 次，每 5 分钟一次 |
 | **Cookie 有效期** | 用户 30 天 / 管理员 7 天 |
 | **签到限流** | 5 次/IP/分钟 |
-| **默认中心** | 河南农大许昌校区 (34.13797, 113.80279) |
+| **默认中心** | 不提供；由管理员在服务器私有配置中填写 |
 
 ---
 

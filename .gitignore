@@ -18,6 +18,9 @@
 # --- Local-only Claude harness state ---
 .claude/
 
+# --- Local-only Codex deployment instructions ---
+/.codex/*.local.md
+
 # --- Build outputs ---
 /wangui
 /wangui-*

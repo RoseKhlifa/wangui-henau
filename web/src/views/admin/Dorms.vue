@@ -312,7 +312,7 @@ async function remove(d: AdminDorm) {
             <div class="rounded-lg bg-blue-500/[0.05] ring-1 ring-blue-500/20 p-3 text-[11px] text-zinc-700 dark:text-zinc-300 leading-relaxed space-y-2">
               <p>
                 <strong class="text-blue-300">怎么填经纬度</strong>：必须是 <strong>WGS84</strong>（GPS 通用格式），6 位小数 ≈ 米级精度。形如
-                <code class="bg-zinc-200/70 dark:bg-zinc-800/70 px-1 rounded font-mono-token">34.137970, 113.802790</code>。
+                <code class="bg-zinc-200/70 dark:bg-zinc-800/70 px-1 rounded font-mono-token">34.000000, 113.000000</code>（仅为格式示例）。
               </p>
               <p>
                 <strong class="text-emerald-300">推荐取法</strong>（按好用程度排序）：
@@ -350,19 +350,19 @@ async function remove(d: AdminDorm) {
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">纬度 (latitude) *</label>
-                <input v-model.number="form.latitude" type="number" step="0.000001" placeholder="34.137970"
+                <input v-model.number="form.latitude" type="number" step="0.000001" placeholder="34.000000"
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm font-mono-token focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
                 <p class="text-[10px] text-zinc-500 mt-1">南北方向，中国大陆 ~18 到 53</p>
               </div>
               <div>
                 <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">经度 (longitude) *</label>
-                <input v-model.number="form.longitude" type="number" step="0.000001" placeholder="113.802790"
+                <input v-model.number="form.longitude" type="number" step="0.000001" placeholder="113.000000"
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm font-mono-token focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
                 <p class="text-[10px] text-zinc-500 mt-1">东西方向，中国大陆 ~73 到 135</p>
               </div>
               <div class="col-span-2">
                 <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">详细地址（可选）</label>
-                <input v-model="form.address" placeholder="如「许昌市建设路 12 号河南农业大学许昌校区」"
+                <input v-model="form.address" placeholder="如「示例城市示例路 12 号示例校区」"
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
               </div>
               <div>
@@ -382,7 +382,7 @@ async function remove(d: AdminDorm) {
               </div>
               <div class="col-span-2">
                 <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">备注 (仅管理员可见)</label>
-                <input v-model="form.note" placeholder='例如「主要给软件学院 23 级用」'
+                <input v-model="form.note" placeholder='例如「主要给示例学院使用」'
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
               </div>
 

@@ -9,14 +9,19 @@ For every repository change, complete the full delivery sequence unless the user
 3. Push the commit to the configured upstream repository (`origin`).
 4. Deploy only after the push succeeds.
 
-Do not report a change as complete before the commit, push, and deployment have all succeeded. Never include secrets, `.env`, database files, or runtime data in commits.
+Do not report a change as complete before the commit, push, and deployment have all succeeded.
 
-## Server deployment
+## Public repository privacy
 
-- Connect from the local machine with `ssh chaoxing`.
-- Deploy the server application to `/root/wangui-henau`.
-- Prefer incremental `rsync` from the repository root. Preserve server secrets and runtime state by excluding at least `.git/`, `.env`, `data/`, dependency directories, generated build output, and database files.
-- After syncing, run `docker compose up -d --build` in `/root/wangui-henau`.
-- Verify the `wangui` container is running, inspect recent logs, test `http://127.0.0.1:5555/` on the server, and test the public IP plus port when reachable.
-- The public service port is `5555`; keep the server firewall rule for `5555/tcp` available unless the user changes the exposure method.
-- Never overwrite or print `WANGUI_MASTER_KEY`. Preserve `/root/wangui-henau/.env` and `/root/wangui-henau/data/` across every deployment.
+This is a public repository. Before every commit, inspect the staged diff and remove or replace all private values, including:
+
+- real names, student numbers, classes, departments, email addresses, and avatars;
+- JWTs, OAuth codes, passwords, encryption keys, cookies, and raw authentication responses;
+- private server IPs, SSH aliases, credentials, filesystem details, and infrastructure identifiers;
+- users' exact check-in coordinates, dorm locations, database contents, logs, backups, and runtime data.
+
+Use clearly fictional placeholders in examples. Never commit `.env`, database files, captured traffic, production logs, or local deployment configuration. Do not print secrets during diagnostics or deployment.
+
+## Deployment
+
+Read `.codex/deployment.local.md` when it exists and follow its private machine-specific deployment procedure. That file is intentionally ignored by Git. Preserve remote secrets and runtime data across every deployment.
