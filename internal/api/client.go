@@ -14,7 +14,7 @@ import (
 
 const (
 	BaseURL   = "https://xhbcs.henau.edu.cn/api"
-	DefaultUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.40(0x18002834) NetType/WIFI Language/zh_CN"
+	DefaultUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.43 Mobile Safari/537.36 MicroMessenger/8.0.47"
 )
 
 // Client wraps the henau wangui REST API.
@@ -46,9 +46,7 @@ type APIError struct {
 	Code       int
 	Message    string
 	Path       string
-	HTTPStatus int             // raw HTTP status from the school server
-	Data       json.RawMessage // raw `data` field (school sometimes attaches diagnostics here)
-	RawBody    []byte          // full response body — kept for verbose diagnostic logging
+	HTTPStatus int // raw HTTP status from the school server
 }
 
 func (e *APIError) Error() string {
@@ -90,6 +88,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	req.Header.Set("Origin", "https://xhbcs.henau.edu.cn")
 	req.Header.Set("Referer", "https://xhbcs.henau.edu.cn/")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
@@ -111,7 +110,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	// Some 4xx/5xx may also return JSON envelope; try envelope first.
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("decode envelope (status=%d body=%q): %w", resp.StatusCode, truncate(string(raw), 200), err)
+		return fmt.Errorf("decode envelope (status=%d): %w", resp.StatusCode, err)
 	}
 	if env.Code != 200 {
 		// Prefer HTTP status for auth detection.
@@ -124,8 +123,6 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			Message:    env.Message,
 			Path:       path,
 			HTTPStatus: resp.StatusCode,
-			Data:       env.Data,
-			RawBody:    raw,
 		}
 	}
 	if out != nil && len(env.Data) > 0 && !bytes.Equal(env.Data, []byte("null")) {
@@ -134,11 +131,4 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 	}
 	return nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

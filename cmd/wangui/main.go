@@ -290,12 +290,16 @@ func runStatus(path string) error {
 	defer cancel()
 	c := api.New(cfg.Token)
 
-	st, err := c.CheckinStatus(ctx, cfg.RuleID)
+	rule, err := c.CurrentRule(ctx)
+	if err != nil {
+		return fmt.Errorf("current rule: %w", err)
+	}
+	st, err := c.CheckinStatus(ctx, rule.RuleID)
 	if err != nil {
 		return err
 	}
 	b, _ := json.MarshalIndent(st, "", "  ")
-	logger.Info("status", "rule_id", cfg.RuleID)
+	logger.Info("status", "rule_id", rule.RuleID)
 	fmt.Println(string(b))
 	return nil
 }
@@ -311,7 +315,11 @@ func runSign(path string) error {
 	defer cancel()
 	c := api.New(cfg.Token)
 
-	st, err := c.CheckinStatus(ctx, cfg.RuleID)
+	rule, err := c.CurrentRule(ctx)
+	if err != nil {
+		return fmt.Errorf("current rule: %w", err)
+	}
+	st, err := c.CheckinStatus(ctx, rule.RuleID)
 	if err != nil {
 		return fmt.Errorf("pre-status: %w", err)
 	}
@@ -324,21 +332,25 @@ func runSign(path string) error {
 	}
 
 	req := api.SignRequest{
-		RuleID:          cfg.RuleID,
+		RuleID:          rule.RuleID,
 		Latitude:        cfg.Location.Latitude,
 		Longitude:       cfg.Location.Longitude,
 		DeviceModel:     cfg.Location.DeviceModel,
 		DeviceSystem:    cfg.Location.DeviceSystem,
 		LocationAddress: cfg.Location.Address,
-		City:            cfg.Location.City,
-		Road:            cfg.Location.Road,
-		Poi:             cfg.Location.Poi,
 	}
-	data, err := c.Sign(ctx, req)
+	_, err = c.Sign(ctx, req)
 	if err != nil {
+		if verified, verifyErr := c.CheckinStatus(ctx, rule.RuleID); verifyErr == nil &&
+			verified.HasCheckedIn != nil && *verified.HasCheckedIn {
+			logger.Info("SIGN OK after status verification", "rule_id", rule.RuleID)
+			return nil
+		}
 		return err
 	}
-	logger.Info("SIGN OK", "data", string(data))
+	verified, verifyErr := c.CheckinStatus(ctx, rule.RuleID)
+	logger.Info("SIGN SUBMITTED", "rule_id", rule.RuleID,
+		"verified", verifyErr == nil && verified.HasCheckedIn != nil && *verified.HasCheckedIn)
 	return nil
 }
 

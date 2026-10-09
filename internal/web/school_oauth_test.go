@@ -13,23 +13,23 @@ func TestExtractOAuthCode(t *testing.T) {
 		{
 			name: "callback url",
 			in: schoolAuthInput{
-				CallbackURL: "https://xhbcs.henau.edu.cn/?code=001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy&state=STATE#/checkin",
+				CallbackURL: "https://example.invalid/?code=fictional-code-123&state=EXAMPLE#/checkin",
 			},
-			want: "001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy",
+			want: "fictional-code-123",
 		},
 		{
 			name: "raw code",
 			in: schoolAuthInput{
-				OAuthCode: "001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy",
+				OAuthCode: "fictional-code-123",
 			},
-			want: "001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy",
+			want: "fictional-code-123",
 		},
 		{
 			name: "query only",
 			in: schoolAuthInput{
-				CallbackURL: "?code=001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy&state=STATE",
+				CallbackURL: "?code=fictional-code-123&state=EXAMPLE",
 			},
-			want: "001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy",
+			want: "fictional-code-123",
 		},
 	}
 
@@ -52,7 +52,7 @@ func TestExtractOAuthCodeMissingCode(t *testing.T) {
 	t.Parallel()
 
 	if _, err := extractOAuthCode(schoolAuthInput{
-		CallbackURL: "https://xhbcs.henau.edu.cn/#/checkin",
+		CallbackURL: "https://example.invalid/#/checkin",
 	}); err == nil {
 		t.Fatal("extractOAuthCode() expected error, got nil")
 	}

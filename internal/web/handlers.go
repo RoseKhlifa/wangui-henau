@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"wangui/internal/api"
 	"wangui/internal/events"
 	"wangui/internal/notify"
 	"wangui/internal/scheduler"
@@ -209,11 +210,22 @@ func (h *handlers) activate(w http.ResponseWriter, r *http.Request) {
 
 	// Guard: if this user already has a different invite code bound, refuse.
 	// They must delete their account first to free the old code, then activate with the new one.
+	var existingUser *store.User
 	if existing, err := h.store.GetUser(ctx, auth.Claims.Iss); err == nil {
+		existingUser = existing
 		if existing.InviteCode != "" && existing.InviteCode != code {
 			writeErr(w, http.StatusForbidden,
 				"该学号已绑定邀请码 "+existing.InviteCode+"，不能再激活新邀请码。如需更换请先在「账号」页注销。")
 			return
+		}
+	}
+	if !auth.ProfileHydrated && existingUser != nil {
+		auth.User = &api.User{
+			UserName:      existingUser.UserName,
+			UserNumber:    existingUser.UserNumber,
+			UserSection:   existingUser.UserSection,
+			UserClass:     existingUser.UserClass,
+			UserAvatarURL: existingUser.UserAvatarURL,
 		}
 	}
 
@@ -254,8 +266,8 @@ func (h *handlers) activate(w http.ResponseWriter, r *http.Request) {
 		TokenExp:      auth.Claims.ExpiresAt(),
 		AutoSign:      true,
 		InviteCode:    code,
-		DeviceModel:   "iPhone",
-		DeviceSystem:  "iOS",
+		DeviceModel:   "Pixel 7",
+		DeviceSystem:  "Android 13",
 		TriggerMinute: rand.IntN(10),
 		JitterSec:     60,
 		PinHash:       pinHash,
@@ -473,12 +485,14 @@ func (h *handlers) updateToken(w http.ResponseWriter, r *http.Request) {
 	// fetch failed during activation (school CDN flake, transient 403),
 	// re-grabbing the token now also re-grabs the avatar — letting users
 	// self-heal a broken avatar without admin intervention.
-	if err := h.store.UpdateUserProfile(ctx, uid,
-		auth.User.UserName, auth.User.UserNumber,
-		auth.User.UserSection, auth.User.UserClass,
-		auth.User.UserAvatarURL,
-	); err != nil {
-		h.log.Warn("refresh profile failed (token still updated)", "user", uid, "err", err.Error())
+	if auth.ProfileHydrated {
+		if err := h.store.UpdateUserProfile(ctx, uid,
+			auth.User.UserName, auth.User.UserNumber,
+			auth.User.UserSection, auth.User.UserClass,
+			auth.User.UserAvatarURL,
+		); err != nil {
+			h.log.Warn("refresh profile failed (token still updated)", "user", uid, "err", err.Error())
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "expiresAt": auth.Claims.Exp,
@@ -682,7 +696,7 @@ func (h *handlers) signNow(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res := h.sched.SignOnce(ctx, u)
 	_ = h.store.AddRecord(ctx, &store.Record{
-		UserID: uid, RuleID: scheduler.DefaultRuleID,
+		UserID: uid, RuleID: res.RuleID,
 		Status: res.Status, Message: res.Message,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{

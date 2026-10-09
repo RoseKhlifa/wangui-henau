@@ -20,7 +20,6 @@ import (
 	apiclient "wangui/internal/api"
 	"wangui/internal/events"
 	"wangui/internal/notify"
-	"wangui/internal/scheduler"
 	"wangui/internal/store"
 )
 
@@ -410,11 +409,13 @@ func (h *handlers) adminRefreshUserToken(w http.ResponseWriter, r *http.Request)
 	}
 	// Refresh display fields (name/avatar may have changed school-side) but
 	// don't fail the request if this part errors.
-	if err := h.store.UpdateUserProfile(ctx, id,
-		auth.User.UserName, auth.User.UserNumber,
-		auth.User.UserSection, auth.User.UserClass,
-		auth.User.UserAvatarURL); err != nil {
-		h.log.Warn("refresh profile failed (token still updated)", "user", id, "err", err.Error())
+	if auth.ProfileHydrated {
+		if err := h.store.UpdateUserProfile(ctx, id,
+			auth.User.UserName, auth.User.UserNumber,
+			auth.User.UserSection, auth.User.UserClass,
+			auth.User.UserAvatarURL); err != nil {
+			h.log.Warn("refresh profile failed (token still updated)", "user", id, "err", err.Error())
+		}
 	}
 	h.log.Info("admin refresh token", "target_user", id, "new_exp", auth.Claims.ExpiresAt())
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -447,7 +448,20 @@ func (h *handlers) adminCheckinStatusForUser(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	c := apiclient.New(u.Token)
-	st, err := c.CheckinStatus(ctx, scheduler.DefaultRuleID)
+	rule, err := c.CurrentRule(ctx)
+	if err != nil {
+		if apiclient.IsAuthExpired(err) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"state": "tokenExpired", "message": "Token 已失效，请刷新",
+			})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"state": "error", "message": "签到规则获取失败: " + err.Error(),
+		})
+		return
+	}
+	st, err := c.CheckinStatus(ctx, rule.RuleID)
 	if err != nil {
 		if apiclient.IsAuthExpired(err) {
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -512,18 +526,18 @@ func (h *handlers) adminSignNowForUser(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res := h.sched.SignOnce(ctx, u)
 	_ = h.store.AddRecord(ctx, &store.Record{
-		UserID: id, RuleID: -1, // -1 marks "admin-triggered manual sign"
+		UserID: id, RuleID: res.RuleID,
 		Status: res.Status, Message: res.Message,
 	})
 	h.log.Info("admin sign-now", "target_user", id, "status", res.Status)
 	if h.bus != nil {
 		h.bus.PublishJSON(events.TypeSignResult, map[string]any{
-			"userId":   id,
-			"userName": u.UserName,
-			"status":   res.Status,
-			"message":  res.Message,
-			"attempt":  0,
-			"terminal": true,
+			"userId":         id,
+			"userName":       u.UserName,
+			"status":         res.Status,
+			"message":        res.Message,
+			"attempt":        0,
+			"terminal":       true,
 			"adminTriggered": true,
 		})
 	}
@@ -585,6 +599,10 @@ func (h *handlers) adminCreateDorm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "坐标必填")
 		return
 	}
+	if strings.TrimSpace(req.Address) == "" {
+		writeErr(w, http.StatusBadRequest, "详细地址必填（新版签到协议要求地址参与签名）")
+		return
+	}
 	d := &store.Dorm{
 		Name:              strings.TrimSpace(req.Name),
 		Latitude:          req.Latitude,
@@ -594,7 +612,7 @@ func (h *handlers) adminCreateDorm(w http.ResponseWriter, r *http.Request) {
 		Road:              req.Road,
 		Poi:               req.Poi,
 		Note:              req.Note,
-		SendAddressFields: req.SendAddressFields,
+		SendAddressFields: true,
 	}
 	if err := h.store.CreateDorm(r.Context(), d); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -629,6 +647,12 @@ func (h *handlers) adminUpdateDorm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
+	if req.Address != nil && strings.TrimSpace(*req.Address) == "" {
+		writeErr(w, http.StatusBadRequest, "详细地址不能为空（新版签到协议要求地址参与签名）")
+		return
+	}
+	sendAddressFields := true
+	req.SendAddressFields = &sendAddressFields
 	if err := h.store.UpdateDorm(r.Context(), id,
 		req.Name, req.Latitude, req.Longitude,
 		req.Address, req.City, req.Road, req.Poi, req.Note,
@@ -836,7 +860,8 @@ func (h *handlers) adminTestSMTP(w http.ResponseWriter, r *http.Request) {
 // Defaults: from = first day of current month, to = today.
 //
 // Columns:
-//   id, occurred_at_iso, user_id, user_name, user_number, status, message, rule_id
+//
+//	id, occurred_at_iso, user_id, user_name, user_number, status, message, rule_id
 //
 // occurred_at is ISO 8601 in the server's local timezone (CST) for Excel
 // friendliness — raw unix timestamps confuse non-technical users.
@@ -1137,6 +1162,7 @@ func (h *handlers) adminCreateGuest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refuse to overwrite an existing non-guest account with the same user_id.
+	var existingGuest *store.User
 	if existing, err := h.store.GetUser(ctx, auth.Claims.Iss); err == nil {
 		if !existing.IsGuest {
 			writeErr(w, http.StatusConflict,
@@ -1144,6 +1170,14 @@ func (h *handlers) adminCreateGuest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Existing guest: we'll overwrite (admin is re-issuing dates).
+		existingGuest = existing
+	}
+	if !auth.ProfileHydrated && existingGuest != nil {
+		auth.User.UserName = existingGuest.UserName
+		auth.User.UserNumber = existingGuest.UserNumber
+		auth.User.UserSection = existingGuest.UserSection
+		auth.User.UserClass = existingGuest.UserClass
+		auth.User.UserAvatarURL = existingGuest.UserAvatarURL
 	}
 
 	datesJSON, _ := json.Marshal(dates)
@@ -1158,8 +1192,8 @@ func (h *handlers) adminCreateGuest(w http.ResponseWriter, r *http.Request) {
 		Token:         auth.Token,
 		TokenExp:      auth.Claims.ExpiresAt(),
 		AutoSign:      true,
-		DeviceModel:   "iPhone",
-		DeviceSystem:  "iOS",
+		DeviceModel:   "Pixel 7",
+		DeviceSystem:  "Android 13",
 		TriggerMinute: mathrand.IntN(10),
 		JitterSec:     60,
 		IsGuest:       true,

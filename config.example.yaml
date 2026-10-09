@@ -2,20 +2,20 @@
 # 复制为 config.yaml 后填入真实值；config.yaml 已在 .gitignore
 
 # 学校签到系统的 JWT（从手机微信抓包获取，Authorization: Bearer 后面那一串）
-token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxxxx.yyyyy"
+token: "fictional.jwt.token"
 
-# 用于签到的考勤规则 ID；当前学校只有一条，ruleId=1
+# 兼容单租户 CLI 的规则 ID；Web 调度会在每次签到前读取当前可用规则
 rule_id: 1
 
-# 打卡坐标 —— 必须落在规则圆心半径内，否则后端拒绝
-# 今晚 22:00 真实签到一次时用 reqable 抓 POST /checkin 的请求体，把以下字段对应粘过来
+# 以下均为虚构占位值。实际部署时只在私有 config.yaml 中填写本人合规使用的位置与地址。
+# 当前协议要求 address 参与签名，不能留空。
 location:
-  latitude:  34.000000
-  longitude: 113.000000
-  device_model:  "iPhone"
-  device_system: "iOS"
-  address: "河南省郑州市..."
-  city:    "郑州市"
+  latitude:  12.345678
+  longitude: 98.765432
+  device_model:  "Pixel 7"
+  device_system: "Android 13"
+  address: "示例市测试路 1 号"
+  city:    "示例市"
   road:    ""
   poi:     ""
 

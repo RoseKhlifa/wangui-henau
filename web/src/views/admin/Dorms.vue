@@ -11,7 +11,6 @@ import {
   Users as UsersIcon,
   MapPin,
   Eye,
-  EyeOff,
   Info,
 } from 'lucide-vue-next'
 import type { AdminDorm, DormUserBrief } from '../../types'
@@ -53,7 +52,7 @@ const form = ref({
   road: '',
   poi: '',
   note: '',
-  sendAddressFields: false,
+  sendAddressFields: true,
 })
 const saving = ref(false)
 
@@ -91,7 +90,7 @@ function openCreate() {
     road: '',
     poi: '',
     note: '',
-    sendAddressFields: false,
+    sendAddressFields: true,
   }
   showModal.value = true
 }
@@ -107,7 +106,7 @@ function openEdit(d: AdminDorm) {
     road: d.road,
     poi: d.poi,
     note: d.note,
-    sendAddressFields: d.sendAddressFields,
+    sendAddressFields: true,
   }
   showModal.value = true
 }
@@ -118,9 +117,13 @@ async function save() {
     return
   }
   if (!form.value.latitude || !form.value.longitude) {
-    showToast('err', '请在地图上选点')
-    return
+	showToast('err', '请在地图上选点')
+	return
   }
+	if (!form.value.address.trim()) {
+	showToast('err', '详细地址必填，新版协议要求地址参与签名')
+	return
+	}
   saving.value = true
   try {
     if (editing.value) {
@@ -228,20 +231,11 @@ async function remove(d: AdminDorm) {
               </td>
               <td class="px-4 py-3">
                 <span
-                  v-if="d.sendAddressFields"
                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30"
-                  title="签到时一并发送 locationAddress/city/road/poi"
+                  title="新版协议要求 locationAddress 参与签名"
                 >
                   <Eye class="w-3 h-3" />
                   含地址
-                </span>
-                <span
-                  v-else
-                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-zinc-200/60 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 ring-1 ring-black/[0.05] dark:ring-white/[0.04]"
-                  title="签到时仅发送 ruleId/latitude/longitude（最小载荷）"
-                >
-                  <EyeOff class="w-3 h-3" />
-                  仅坐标
                 </span>
               </td>
               <td class="px-4 py-3">
@@ -361,7 +355,7 @@ async function remove(d: AdminDorm) {
                 <p class="text-[10px] text-zinc-500 mt-1">东西方向，中国大陆 ~73 到 135</p>
               </div>
               <div class="col-span-2">
-                <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">详细地址（可选）</label>
+                <label class="block text-[10px] text-zinc-500 tracking-wide uppercase mb-1">详细地址 *</label>
                 <input v-model="form.address" placeholder="如「示例城市示例路 12 号示例校区」"
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
               </div>
@@ -386,36 +380,17 @@ async function remove(d: AdminDorm) {
                   class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 text-sm focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600" />
               </div>
 
-              <!-- Payload mode toggle -->
+              <!-- Current encrypted protocol requirements -->
               <div class="col-span-2 mt-2 rounded-lg bg-white/50 dark:bg-zinc-950/50 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3">
-                <div class="flex items-center justify-between gap-3 mb-2">
+                <div class="flex items-center gap-1.5 mb-2">
                   <div class="flex items-center gap-1.5 min-w-0">
                     <Info class="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                    <span class="text-xs text-zinc-700 dark:text-zinc-300 font-medium">签到载荷</span>
+                    <span class="text-xs text-zinc-700 dark:text-zinc-300 font-medium">新版加密协议</span>
                   </div>
-                  <button
-                    type="button"
-                    @click="form.sendAddressFields = !form.sendAddressFields"
-                    :class="form.sendAddressFields ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-700'"
-                    class="relative w-10 h-5 rounded-full transition-colors shrink-0"
-                  >
-                    <span
-                      :class="form.sendAddressFields ? 'translate-x-5' : 'translate-x-0.5'"
-                      class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow-md transition-transform"
-                    />
-                  </button>
                 </div>
                 <p class="text-[11px] text-zinc-500 leading-relaxed">
-                  <template v-if="form.sendAddressFields">
-                    <span class="text-blue-300">含地址</span>：签到请求体一并发送
-                    <code class="bg-zinc-200/70 dark:bg-zinc-800/70 px-1 rounded text-zinc-700 dark:text-zinc-300">locationAddress / city / road / poi</code>。
-                    跟学校前端真实流量一致，但要求上面填的地址跟坐标精确对应。
-                  </template>
-                  <template v-else>
-                    <span class="text-zinc-700 dark:text-zinc-300">仅坐标</span>：签到请求体只发送
-                    <code class="bg-zinc-200/70 dark:bg-zinc-800/70 px-1 rounded text-zinc-700 dark:text-zinc-300">ruleId / latitude / longitude / deviceModel / deviceSystem</code>。
-                    经测试足以让签到成功；偏离真实流量结构但避免地址字段对不齐被审计。
-                  </template>
+                  <code class="bg-zinc-200/70 dark:bg-zinc-800/70 px-1 rounded text-zinc-700 dark:text-zinc-300">locationAddress</code>
+                  现在是签名载荷的必需字段，必须与所选坐标对应。城市、街道和 POI 仅用于管理展示。
                 </p>
               </div>
             </div>

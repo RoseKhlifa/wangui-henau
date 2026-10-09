@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   Activity,
   Megaphone,
-  Wrench,
 } from 'lucide-vue-next'
 import Logo from './Logo.vue'
 import ThemeToggle from './ThemeToggle.vue'
@@ -34,7 +33,6 @@ const items: NavItem[] = [
   { to: '/rosekhlifa/users', label: '用户', icon: Users },
   { to: '/rosekhlifa/guests', label: '临时朋友', icon: UserPlus },
   { to: '/rosekhlifa/logs', label: '日志', icon: ScrollText },
-  { to: '/rosekhlifa/sign-debug', label: '签到调试', icon: Wrench },
   { to: '/rosekhlifa/settings', label: '设置', icon: Cog },
 ]
 

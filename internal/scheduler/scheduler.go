@@ -88,7 +88,15 @@ func (s *Scheduler) runDay(ctx context.Context) {
 func (s *Scheduler) attempt(ctx context.Context, label string) bool {
 	s.n.Info("attempt start", "label", label)
 
-	st, err := s.client.CheckinStatus(ctx, s.cfg.RuleID)
+	rule, err := s.client.CurrentRule(ctx)
+	if err != nil {
+		s.n.Error("rule fetch failed", "label", label, "err", err.Error())
+		if api.IsAuthExpired(err) {
+			s.n.Error("TOKEN EXPIRED — manual refresh required")
+		}
+		return false
+	}
+	st, err := s.client.CheckinStatus(ctx, rule.RuleID)
 	if err != nil {
 		s.n.Error("status fetch failed", "label", label, "err", err.Error())
 		if api.IsAuthExpired(err) {
@@ -114,21 +122,28 @@ func (s *Scheduler) attempt(ctx context.Context, label string) bool {
 	}
 
 	req := api.SignRequest{
-		RuleID:          s.cfg.RuleID,
+		RuleID:          rule.RuleID,
 		Latitude:        s.cfg.Location.Latitude,
 		Longitude:       s.cfg.Location.Longitude,
 		DeviceModel:     s.cfg.Location.DeviceModel,
 		DeviceSystem:    s.cfg.Location.DeviceSystem,
 		LocationAddress: s.cfg.Location.Address,
-		City:            s.cfg.Location.City,
-		Road:            s.cfg.Location.Road,
-		Poi:             s.cfg.Location.Poi,
 	}
 	if _, err := s.client.Sign(ctx, req); err != nil {
+		if verified, verifyErr := s.client.CheckinStatus(ctx, rule.RuleID); verifyErr == nil &&
+			verified.HasCheckedIn != nil && *verified.HasCheckedIn {
+			s.n.Info("SIGN OK after status verification", "label", label, "rule_id", rule.RuleID)
+			return true
+		}
 		s.n.Error("sign failed", "label", label, "err", err.Error())
 		return false
 	}
-	s.n.Info("SIGN OK", "label", label, "lat", req.Latitude, "lng", req.Longitude)
+	verified, verifyErr := s.client.CheckinStatus(ctx, rule.RuleID)
+	if verifyErr == nil && verified.HasCheckedIn != nil && *verified.HasCheckedIn {
+		s.n.Info("SIGN OK", "label", label, "rule_id", rule.RuleID, "verified", true)
+	} else {
+		s.n.Info("SIGN SUBMITTED", "label", label, "rule_id", rule.RuleID, "verified", false)
+	}
 	return true
 }
 

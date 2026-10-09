@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +22,6 @@ const (
 	WindowHour        = 22
 	WindowStartMinute = 0
 	WindowEndMinute   = 30
-	DefaultRuleID     = 1
 )
 
 // Multi is the multi-tenant scheduler.
@@ -238,14 +238,14 @@ func (m *Multi) runWeeklyDigestSweep(ctx context.Context) {
 
 // WeeklyStats is the per-user summary the digest email + Server酱 receive.
 type WeeklyStats struct {
-	From         time.Time
-	To           time.Time
-	DaysSigned   int      // count of distinct days with success/already/exempt
-	DaysFailed   int      // distinct days with failed
-	DaysSkipped  int      // distinct days with skipped (or user marked skip)
-	TotalAttempts int     // raw record count
-	BestDay      string   // YYYY-MM-DD of fastest successful sign, "" if none
-	BestStatus   string   // best outcome status for BestDay
+	From          time.Time
+	To            time.Time
+	DaysSigned    int    // count of distinct days with success/already/exempt
+	DaysFailed    int    // distinct days with failed
+	DaysSkipped   int    // distinct days with skipped (or user marked skip)
+	TotalAttempts int    // raw record count
+	BestDay       string // YYYY-MM-DD of fastest successful sign, "" if none
+	BestStatus    string // best outcome status for BestDay
 }
 
 func computeWeeklyStats(recs []store.Record, from, to time.Time) WeeklyStats {
@@ -490,7 +490,7 @@ func (m *Multi) runForUser(ctx context.Context, userID string, deadline time.Tim
 		}
 		res := m.SignOnce(ctx, cur)
 		_ = m.store.AddRecord(ctx, &store.Record{
-			UserID: userID, RuleID: DefaultRuleID,
+			UserID: userID, RuleID: res.RuleID,
 			Status: res.Status, Message: res.Message,
 		})
 		m.log.Info("attempt",
@@ -534,6 +534,7 @@ func (m *Multi) runForUser(ctx context.Context, userID string, deadline time.Tim
 type SignResult struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
+	RuleID  int    `json:"ruleId"`
 }
 
 func (r SignResult) Terminal() bool {
@@ -548,77 +549,91 @@ func (r SignResult) Terminal() bool {
 // It never writes records — the caller decides whether to persist.
 func (m *Multi) SignOnce(ctx context.Context, u *store.User) SignResult {
 	c := api.New(u.Token)
-	st, err := c.CheckinStatus(ctx, DefaultRuleID)
+	rule, err := c.CurrentRule(ctx)
 	if err != nil {
 		if api.IsAuthExpired(err) {
 			return SignResult{Status: "failed", Message: "token 已失效，请更新"}
 		}
-		return SignResult{Status: "failed", Message: "状态获取失败: " + err.Error()}
+		return SignResult{Status: "failed", Message: "签到规则获取失败: " + err.Error()}
+	}
+	result := SignResult{RuleID: rule.RuleID}
+	st, err := c.CheckinStatus(ctx, rule.RuleID)
+	if err != nil {
+		if api.IsAuthExpired(err) {
+			result.Status, result.Message = "failed", "token 已失效，请更新"
+			return result
+		}
+		result.Status, result.Message = "failed", "状态获取失败: "+err.Error()
+		return result
 	}
 	if st.IsBoarding {
-		return SignResult{Status: "exempt", Message: "外宿学生无需签到"}
+		result.Status, result.Message = "exempt", "外宿学生无需签到"
+		return result
 	}
 	if st.IsExempt != nil && *st.IsExempt {
-		return SignResult{Status: "exempt", Message: nonEmpty(st.Message, "请假中")}
+		result.Status, result.Message = "exempt", nonEmpty(st.Message, "请假中")
+		return result
 	}
 	if st.HasCheckedIn != nil && *st.HasCheckedIn {
-		return SignResult{Status: "already", Message: nonEmpty(st.Message, "今日已签到")}
+		result.Status, result.Message = "already", nonEmpty(st.Message, "今日已签到")
+		return result
 	}
 	if !st.CanCheckin {
-		return SignResult{Status: "failed", Message: nonEmpty(st.Message, "当前无法签到")}
+		result.Status, result.Message = "failed", nonEmpty(st.Message, "当前无法签到")
+		return result
 	}
 	if u.Lat == 0 || u.Lng == 0 {
-		return SignResult{Status: "failed", Message: "未配置打卡坐标"}
+		result.Status, result.Message = "failed", "未配置打卡坐标"
+		return result
+	}
+	if strings.TrimSpace(u.Address) == "" {
+		result.Status, result.Message = "failed", "未配置签到地址；新版协议要求地址参与签名"
+		return result
 	}
 	req := api.SignRequest{
-		RuleID:       DefaultRuleID,
-		Latitude:     u.Lat,
-		Longitude:    u.Lng,
-		DeviceModel:  nonEmpty(u.DeviceModel, "iPhone"),
-		DeviceSystem: nonEmpty(u.DeviceSystem, "iOS"),
-	}
-	// If the dorm admin opted in to including address detail in the
-	// sign request, fill those fields; otherwise leave blank → omitempty drops them.
-	if u.SendAddressFields {
-		req.LocationAddress = u.Address
-		req.City = u.City
-		req.Road = u.Road
-		req.Poi = u.Poi
+		RuleID:          rule.RuleID,
+		Latitude:        u.Lat,
+		Longitude:       u.Lng,
+		DeviceModel:     nonEmpty(u.DeviceModel, "Pixel 7"),
+		DeviceSystem:    nonEmpty(u.DeviceSystem, "Android 13"),
+		LocationAddress: u.Address,
 	}
 	if _, err := c.Sign(ctx, req); err != nil {
-		if api.IsAuthExpired(err) {
-			return SignResult{Status: "failed", Message: "token 已失效，请更新"}
+		// The POST response can be lost after the school has committed the
+		// record. Verify before allowing the outer scheduler to retry with a
+		// fresh nonce, preventing duplicate submissions.
+		if verified, verifyErr := c.CheckinStatus(ctx, rule.RuleID); verifyErr == nil &&
+			verified.HasCheckedIn != nil && *verified.HasCheckedIn {
+			result.Status, result.Message = "success", "签到成功（状态复核通过）"
+			return result
 		}
-		// On any non-auth failure, log the full school response so admin
-		// can see "data" / "rawBody" in docker logs. This is the only way
-		// to find out which field/value the school rejected without doing
-		// a fresh OAuth dance in DevTools.
+		if api.IsAuthExpired(err) {
+			result.Status, result.Message = "failed", "token 已失效，请更新"
+			return result
+		}
 		var ae *api.APIError
 		if errors.As(err, &ae) {
-			m.log.Warn("school sign rejected — full response",
+			m.log.Warn("school sign rejected",
 				"user", u.UserID,
 				"http_status", ae.HTTPStatus,
 				"code", ae.Code,
 				"message", ae.Message,
-				"data", string(ae.Data),
-				"raw_body", truncateForLog(ae.RawBody, 2000),
-				"sent_lat", req.Latitude,
-				"sent_lng", req.Longitude,
-				"sent_coord_type", req.CoordType,
 			)
-			return SignResult{Status: "failed", Message: ae.Message}
+			result.Status, result.Message = "failed", nonEmpty(ae.Message, "学校拒绝签到请求")
+			return result
 		}
-		return SignResult{Status: "failed", Message: err.Error()}
+		result.Status, result.Message = "failed", err.Error()
+		return result
 	}
-	return SignResult{Status: "success", Message: "签到成功"}
-}
-
-func truncateForLog(b []byte, n int) string {
-	s := string(b)
-	if len(s) > n {
-		return s[:n] + "..."
+	verified, err := c.CheckinStatus(ctx, rule.RuleID)
+	if err == nil && verified.HasCheckedIn != nil && *verified.HasCheckedIn {
+		result.Status, result.Message = "success", "签到成功（状态复核通过）"
+		return result
 	}
-	return s
+	// A successful POST is terminal even if the read model has not caught up;
+	// retrying here could submit the same day's check-in twice.
+	result.Status, result.Message = "success", "签到已提交，学校状态暂未同步"
+	return result
 }
 
 func nonEmpty(s, fallback string) string {

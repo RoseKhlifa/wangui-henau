@@ -19,9 +19,10 @@ type schoolAuthInput struct {
 }
 
 type resolvedSchoolAuth struct {
-	Token  string
-	Claims *jwtClaims
-	User   *api.User
+	Token           string
+	Claims          *jwtClaims
+	User            *api.User
+	ProfileHydrated bool
 }
 
 func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput) (*resolvedSchoolAuth, int, error) {
@@ -46,14 +47,26 @@ func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput) (*
 		return nil, http.StatusBadRequest, errors.New("学校 Token 已过期或即将过期，请重新扫码")
 	}
 
-	su, err := api.New(tok).GetUser(ctx)
-	if err != nil {
-		return nil, http.StatusUnauthorized, fmt.Errorf("Token 校验失败: %w", err)
+	c := api.New(tok)
+	su, profileErr := c.GetUser(ctx)
+	profileHydrated := profileErr == nil
+	if profileErr != nil {
+		// /auth/user has changed independently of the check-in endpoints in
+		// the past. A manually captured JWT is still accepted only after a
+		// school-side, read-only endpoint confirms it is usable.
+		if _, err := c.AvailableRules(ctx); err != nil {
+			return nil, http.StatusUnauthorized, fmt.Errorf("Token 校验失败: %w", err)
+		}
+		su = &api.User{
+			UserName:   "学校用户",
+			UserNumber: claims.Iss,
+		}
 	}
 	return &resolvedSchoolAuth{
-		Token:  tok,
-		Claims: claims,
-		User:   su,
+		Token:           tok,
+		Claims:          claims,
+		User:            su,
+		ProfileHydrated: profileHydrated,
 	}, http.StatusOK, nil
 }
 

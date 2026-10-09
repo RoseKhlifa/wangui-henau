@@ -63,15 +63,18 @@ func (c *Config) validate() error {
 	if c.Location.Latitude == 0 || c.Location.Longitude == 0 {
 		return fmt.Errorf("config.location.latitude/longitude is 0; fill real coords")
 	}
+	if c.Location.Address == "" {
+		return fmt.Errorf("config.location.address is empty; the current signing protocol requires it")
+	}
 	return nil
 }
 
 func (c *Config) applyDefaults() {
 	if c.Location.DeviceModel == "" {
-		c.Location.DeviceModel = "iPhone"
+		c.Location.DeviceModel = "Pixel 7"
 	}
 	if c.Location.DeviceSystem == "" {
-		c.Location.DeviceSystem = "iOS"
+		c.Location.DeviceSystem = "Android 13"
 	}
 	if c.Schedule.PrimaryMinuteOffset == 0 {
 		c.Schedule.PrimaryMinuteOffset = 2
