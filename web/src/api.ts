@@ -23,7 +23,13 @@ import type {
 export interface SchoolAuthPayload {
   token?: string
   callbackUrl?: string
-  oauthCode?: string
+  oauthAttemptId?: string
+}
+
+export interface SchoolOAuthPrepared {
+  attemptId: string
+  authorizationUrl: string
+  expiresAt: number
 }
 
 // Public-ish endpoint — admin authors notices and any user reads them.
@@ -64,7 +70,7 @@ export const api = {
   // showing the wechat-OAuth UI. Random visitors with no invite never see the
   // QR / "copy callback URL" flow at all.
   activatePrecheck: (inviteCode: string) =>
-    request<{ ok: boolean; note?: string }>('/activate/precheck', {
+    request<SchoolOAuthPrepared & { ok: boolean; note?: string }>('/activate/precheck', {
       method: 'POST',
       body: JSON.stringify({ inviteCode }),
     }),
@@ -86,6 +92,8 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(auth),
     }),
+  prepareTokenOAuth: () =>
+    request<SchoolOAuthPrepared>('/token/oauth/prepare', { method: 'POST' }),
   changePin: (oldPin: string, newPin: string) =>
     request<{ ok: boolean }>('/pin', {
       method: 'PUT',
@@ -208,6 +216,11 @@ export const adminApi = {
         body: JSON.stringify(auth),
       },
     ),
+  prepareUserTokenOAuth: (id: string) =>
+    request<SchoolOAuthPrepared>(
+      '/rosekhlifa/users/' + encodeURIComponent(id) + '/token/oauth/prepare',
+      { method: 'POST' },
+    ),
 
   logs: (limit = 100) => request<AdminLog[]>('/rosekhlifa/logs?limit=' + limit),
 
@@ -228,6 +241,8 @@ export const adminApi = {
     request<DormUserBrief[]>('/rosekhlifa/dorms/' + id + '/users'),
 
   listGuests: () => request<AdminGuest[]>('/rosekhlifa/guests'),
+  prepareGuestOAuth: () =>
+    request<SchoolOAuthPrepared>('/rosekhlifa/guests/oauth/prepare', { method: 'POST' }),
   createGuest: (req: GuestCreateReq) =>
     request<AdminGuest>('/rosekhlifa/guests', {
       method: 'POST',

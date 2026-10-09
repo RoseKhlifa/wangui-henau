@@ -393,7 +393,7 @@ func (h *handlers) adminRefreshUserToken(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	auth, status, err := h.resolveSchoolAuth(ctx, req)
+	auth, status, err := h.resolveSchoolAuth(ctx, req, adminUserOAuthAudience(id))
 	if err != nil {
 		writeErr(w, status, err.Error())
 		return
@@ -1123,9 +1123,9 @@ func (h *handlers) adminListGuests(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/v1/rosekhlifa/guests
 //
-// Body: {label, signDates: [...], dormId?, callbackUrl|oauthCode|token}
+// Body: {label, signDates: [...], dormId?, callbackUrl+oauthAttemptId|token}
 //
-// Resolves the school OAuth code → JWT → user identity, writes a guest user
+// Resolves one prepared school OAuth callback → JWT → user identity, writes a guest user
 // record. ExpiresAt is auto-set to (max(signDates) + 1 day) so the cleanup
 // ticker picks it up after the last sign date passes.
 func (h *handlers) adminCreateGuest(w http.ResponseWriter, r *http.Request) {
@@ -1155,7 +1155,7 @@ func (h *handlers) adminCreateGuest(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	auth, status, err := h.resolveSchoolAuth(ctx, req.schoolAuthInput)
+	auth, status, err := h.resolveSchoolAuth(ctx, req.schoolAuthInput, adminGuestOAuthAudience)
 	if err != nil {
 		writeErr(w, status, err.Error())
 		return

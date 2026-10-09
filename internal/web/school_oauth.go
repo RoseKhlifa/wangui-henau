@@ -5,17 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"wangui/internal/api"
 )
 
 type schoolAuthInput struct {
-	Token       string `json:"token"`
-	CallbackURL string `json:"callbackUrl"`
-	OAuthCode   string `json:"oauthCode"`
+	Token          string `json:"token"`
+	CallbackURL    string `json:"callbackUrl"`
+	OAuthAttemptID string `json:"oauthAttemptId"`
 }
 
 type resolvedSchoolAuth struct {
@@ -25,18 +26,18 @@ type resolvedSchoolAuth struct {
 	ProfileHydrated bool
 }
 
-func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput) (*resolvedSchoolAuth, int, error) {
+func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput, audience string) (*resolvedSchoolAuth, int, error) {
 	tok := normalizeToken(in.Token)
+	var exchangedUser *api.User
 	if tok == "" {
-		code, err := extractOAuthCode(in)
-		if err != nil {
-			return nil, http.StatusBadRequest, err
+		if strings.TrimSpace(in.OAuthAttemptID) == "" || strings.TrimSpace(in.CallbackURL) == "" {
+			return nil, http.StatusBadRequest, errors.New("请先生成本轮授权链接，再粘贴完整的学校回调 URL")
 		}
-		exchanged, status, err := exchangeOAuthCode(ctx, code)
+		var err error
+		tok, exchangedUser, err = h.schoolOAuth.exchange(ctx, audience, in.OAuthAttemptID, in.CallbackURL)
 		if err != nil {
-			return nil, status, err
+			return nil, schoolOAuthAPIErrorStatus(err), err
 		}
-		tok = exchanged
 	}
 
 	claims, err := parseJWT(tok)
@@ -44,16 +45,24 @@ func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput) (*
 		return nil, http.StatusBadRequest, err
 	}
 	if time.Until(claims.ExpiresAt()) < 5*time.Minute {
-		return nil, http.StatusBadRequest, errors.New("学校 Token 已过期或即将过期，请重新扫码")
+		return nil, http.StatusBadRequest, errors.New("学校 Token 已过期或即将过期，请重新授权")
 	}
 
+	if exchangedUser != nil {
+		return &resolvedSchoolAuth{
+			Token:           tok,
+			Claims:          claims,
+			User:            exchangedUser,
+			ProfileHydrated: true,
+		}, http.StatusOK, nil
+	}
+
+	// Manual JWT remains an advanced fallback. Validate it against the school
+	// instead of trusting its unverified claims.
 	c := api.New(tok)
 	su, profileErr := c.GetUser(ctx)
 	profileHydrated := profileErr == nil
 	if profileErr != nil {
-		// /auth/user has changed independently of the check-in endpoints in
-		// the past. A manually captured JWT is still accepted only after a
-		// school-side, read-only endpoint confirms it is usable.
 		if _, err := c.AvailableRules(ctx); err != nil {
 			return nil, http.StatusUnauthorized, fmt.Errorf("Token 校验失败: %w", err)
 		}
@@ -70,96 +79,34 @@ func (h *handlers) resolveSchoolAuth(ctx context.Context, in schoolAuthInput) (*
 	}, http.StatusOK, nil
 }
 
-func extractOAuthCode(in schoolAuthInput) (string, error) {
-	if code := normalizeOAuthCode(in.OAuthCode); code != "" {
-		return code, nil
-	}
-
-	raw := strings.TrimSpace(in.CallbackURL)
-	if raw == "" {
-		return "", errors.New("请粘贴扫码后的回调链接或 code")
-	}
-	if code := codeFromMaybeURL(raw); code != "" {
-		return code, nil
-	}
-	return "", errors.New("回调链接中没有找到 code 参数")
-}
-
-func normalizeOAuthCode(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if strings.ContainsAny(s, "?#=&/ \t\r\n") {
-		return ""
-	}
-	return s
-}
-
-func codeFromMaybeURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-
-	if code := codeFromParsedURL(raw); code != "" {
-		return code
-	}
-
-	if strings.HasPrefix(raw, "?") {
-		if q, err := url.ParseQuery(strings.TrimPrefix(raw, "?")); err == nil {
-			return strings.TrimSpace(q.Get("code"))
-		}
-	}
-
-	if strings.Contains(raw, "code=") {
-		if q, err := url.ParseQuery(raw); err == nil {
-			return strings.TrimSpace(q.Get("code"))
-		}
-	}
-
-	return ""
-}
-
-func codeFromParsedURL(raw string) string {
-	u, err := url.Parse(raw)
+func (h *handlers) prepareUserTokenOAuth(w http.ResponseWriter, r *http.Request) {
+	prepared, err := h.schoolOAuth.prepare(r.Context(), userOAuthAudience(userIDOf(r)))
 	if err != nil {
-		return ""
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
 	}
-	if code := strings.TrimSpace(u.Query().Get("code")); code != "" {
-		return code
-	}
-	if frag := strings.TrimSpace(u.Fragment); frag != "" {
-		if i := strings.IndexByte(frag, '?'); i >= 0 {
-			if q, err := url.ParseQuery(frag[i+1:]); err == nil {
-				return strings.TrimSpace(q.Get("code"))
-			}
-		}
-	}
-	return ""
+	writeJSON(w, http.StatusOK, prepared)
 }
 
-func exchangeOAuthCode(ctx context.Context, code string) (string, int, error) {
-	resp, err := api.New("").OAuth2Login(ctx, code)
+func (h *handlers) prepareAdminUserTokenOAuth(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, err := h.store.GetUser(r.Context(), id); err != nil {
+		writeErr(w, http.StatusNotFound, "用户不存在")
+		return
+	}
+	prepared, err := h.schoolOAuth.prepare(r.Context(), adminUserOAuthAudience(id))
 	if err != nil {
-		var ae *api.APIError
-		if errors.As(err, &ae) {
-			if ae.Code == http.StatusUnauthorized || ae.Code == http.StatusForbidden {
-				return "", http.StatusUnauthorized, errors.New("扫码回调已失效，请重新扫码")
-			}
-			if ae.Message != "" {
-				return "", http.StatusBadGateway, fmt.Errorf("学校 OAuth 登录失败: %s", ae.Message)
-			}
-		}
-		return "", http.StatusBadGateway, fmt.Errorf("学校 OAuth 登录失败: %w", err)
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
 	}
-	if resp.IsNewUser && strings.TrimSpace(resp.AccessToken) == "" {
-		return "", http.StatusBadRequest, errors.New("学校系统返回首次绑定状态，请先在手机里打开晚归页面完成学校侧初始化后再重试")
-	}
+	writeJSON(w, http.StatusOK, prepared)
+}
 
-	tok := normalizeToken(resp.AccessToken)
-	if tok == "" {
-		return "", http.StatusBadGateway, errors.New("学校系统未返回 accessToken，请重新扫码后再试")
+func (h *handlers) prepareAdminGuestOAuth(w http.ResponseWriter, r *http.Request) {
+	prepared, err := h.schoolOAuth.prepare(r.Context(), adminGuestOAuthAudience)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
 	}
-	return tok, http.StatusOK, nil
+	writeJSON(w, http.StatusOK, prepared)
 }

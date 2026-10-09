@@ -17,11 +17,11 @@ import {
   RefreshCw,
 } from 'lucide-vue-next'
 import { useAuth } from '../stores/auth'
-import { api } from '../api'
+import { api, type SchoolOAuthPrepared } from '../api'
 import { formatDateTime, formatRemaining, tokenProgressPercent, tokenProgressColor } from '../lib/format'
 import { showToast } from '../lib/toast'
 import { copyText } from '../lib/clipboard'
-import { buildWechatOauthAuthorizeUrl, createWechatOauthState } from '../lib/schoolOauth'
+import { detectSchoolOauthInput } from '../lib/schoolOauth'
 
 const router = useRouter()
 const route = useRoute()
@@ -34,8 +34,12 @@ const tokenSectionRef = ref<HTMLElement | null>(null)
 const tokenPrefilledFlash = ref(false)
 const showLegacyToken = ref(false)
 const wechatQrDataUrl = ref('')
-const wechatState = ref(createWechatOauthState())
+const wechatAttemptId = ref('')
+const wechatAuthorizationUrl = ref('')
 const buildingWechatQr = ref(false)
+const callbackLooksValid = computed(
+  () => detectSchoolOauthInput(callbackUrl.value).kind === 'callback-url',
+)
 
 const oldPin = ref('')
 const newPinA = ref('')
@@ -119,6 +123,7 @@ async function saveToken() {
     await api.updateToken({
       token: tok || undefined,
       callbackUrl: cb || undefined,
+      oauthAttemptId: wechatAttemptId.value || undefined,
     })
     showToast('ok', 'Token 已更新')
     newToken.value = ''
@@ -134,23 +139,31 @@ async function saveToken() {
 async function refreshWechatQr() {
   buildingWechatQr.value = true
   try {
-    wechatState.value = createWechatOauthState()
-    wechatQrDataUrl.value = await QRCode.toDataURL(buildWechatOauthAuthorizeUrl(wechatState.value), {
-      width: 240,
-      margin: 1,
-      errorCorrectionLevel: 'M',
-    })
+    const prepared = await api.prepareTokenOAuth()
+    await applyWechatPrepared(prepared)
   } catch (e: any) {
+    wechatAttemptId.value = ''
+    wechatAuthorizationUrl.value = ''
     wechatQrDataUrl.value = ''
-    showToast('err', e?.message || '二维码生成失败')
+    showToast('err', e?.message || '学校登录准备失败')
   } finally {
     buildingWechatQr.value = false
   }
 }
 
+async function applyWechatPrepared(prepared: SchoolOAuthPrepared) {
+  wechatAttemptId.value = prepared.attemptId
+  wechatAuthorizationUrl.value = prepared.authorizationUrl
+  wechatQrDataUrl.value = await QRCode.toDataURL(prepared.authorizationUrl, {
+      width: 240,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+  })
+}
+
 async function copyWechatUrl() {
-  const ok = await copyText(buildWechatOauthAuthorizeUrl(wechatState.value))
-  showToast(ok ? 'ok' : 'err', ok ? '授权链接已复制' : '复制失败，请手动长按二维码')
+  const ok = await copyText(wechatAuthorizationUrl.value)
+  showToast(ok ? 'ok' : 'err', ok ? '授权链接已复制' : '复制失败')
 }
 
 async function copyInvite() {
@@ -247,7 +260,7 @@ async function logout() {
 
       <div class="mt-5 pt-5 border-t border-black/[0.06] dark:border-white/[0.05]">
         <div class="flex items-center justify-between mb-2">
-          <p class="text-xs text-zinc-500 dark:text-zinc-400">扫码更新学校 Token</p>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400">电脑微信授权更新学校 Token</p>
           <Transition name="fade">
             <span
               v-if="tokenPrefilledFlash"
@@ -265,7 +278,7 @@ async function logout() {
                 <img
                   v-if="wechatQrDataUrl"
                   :src="wechatQrDataUrl"
-                  alt="微信扫码授权二维码"
+                alt="本轮微信授权链接二维码"
                   class="w-full h-full object-contain"
                 />
                 <div v-else class="text-[11px] text-zinc-400 text-center px-2">
@@ -275,9 +288,7 @@ async function logout() {
             </div>
             <div class="min-w-0 flex-1">
               <p class="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                扫码后在手机微信里完成学校晚归授权，然后把跳转后的
-                <code class="bg-zinc-200 dark:bg-zinc-800 px-1 rounded text-zinc-700 dark:text-zinc-300">https://xhbcs.henau.edu.cn/?code=...</code>
-                整段回调链接，或里面的 <code class="bg-zinc-200 dark:bg-zinc-800 px-1 rounded text-zinc-700 dark:text-zinc-300">code</code> 粘贴到下面。
+                复制授权链接并在<strong>电脑微信</strong>中打开。看到学校图片页后复制完整 URL，粘贴到下面。本轮约 5 分钟有效，纯 code 无法兑换。
               </p>
               <div class="mt-3 flex flex-wrap gap-2">
                 <button
@@ -294,7 +305,7 @@ async function logout() {
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors"
                 >
                   <RefreshCw class="w-3 h-3" />
-                  刷新二维码
+                  重新生成本轮链接
                 </button>
               </div>
             </div>
@@ -302,11 +313,11 @@ async function logout() {
         </div>
         <label class="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400 mb-1.5 mt-3">
           <QrCode class="w-3.5 h-3.5" />
-          回调链接或 code
+          学校图片页完整回调链接
         </label>
         <textarea
           v-model="callbackUrl"
-          placeholder="https://xhbcs.henau.edu.cn/?code=...&state=STATE#/checkin"
+          placeholder="https://xhbcs.henau.edu.cn/农大白.png?code=EXAMPLE&state=EXAMPLE"
           class="w-full bg-white dark:bg-zinc-950 ring-1 ring-black/[0.08] dark:ring-white/[0.06] rounded-lg px-3 py-2 h-24 resize-none focus-ring text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
         />
         <button
@@ -321,7 +332,7 @@ async function logout() {
             v-if="showLegacyToken"
             class="mt-2 overflow-hidden rounded-lg bg-white/70 dark:bg-zinc-950/70 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3"
           >
-            <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">仅在扫码流程异常时使用，直接粘贴学校 JWT。</p>
+            <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">仅在授权流程异常时使用，直接粘贴学校 JWT。</p>
             <textarea
               v-model="newToken"
               placeholder="eyJ..."
@@ -331,7 +342,7 @@ async function logout() {
         </Transition>
         <button
           @click="saveToken"
-          :disabled="savingToken || (!newToken.trim() && !callbackUrl.trim())"
+          :disabled="savingToken || (!newToken.trim() && !callbackLooksValid)"
           class="mt-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-200 dark:disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:cursor-not-allowed"
         >
           {{ savingToken ? '保存中…' : '更新 Token' }}

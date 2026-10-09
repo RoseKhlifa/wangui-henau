@@ -246,7 +246,7 @@ export interface GuestCreateReq {
   signDates: string[]
   dormId?: number
   callbackUrl?: string
-  oauthCode?: string
+  oauthAttemptId?: string
   token?: string
 }
 

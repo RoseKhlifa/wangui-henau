@@ -743,7 +743,7 @@ const recordMeta: Record<string, { label: string; color: string; dotBg: string }
       <XCircle class="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
       <div class="flex-1">
         <p class="text-sm font-medium text-red-300">Token 已过期</p>
-        <p class="text-xs text-red-400/80 mt-1">必须重新扫码并更新 Token，才能继续自动签到。</p>
+        <p class="text-xs text-red-400/80 mt-1">必须重新完成微信授权并更新 Token，才能继续自动签到。</p>
       </div>
       <RouterLink to="/account" class="shrink-0 text-xs px-3 py-1.5 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-colors">
         前往更新

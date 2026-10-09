@@ -17,16 +17,14 @@ import {
   PlayCircle,
   History,
   KeyRound,
+  Copy,
 } from 'lucide-vue-next'
 import type { AdminGuest, Dorm } from '../../types'
-import { adminApi } from '../../api'
+import { adminApi, type SchoolOAuthPrepared } from '../../api'
 import { formatDateTime } from '../../lib/format'
 import { showToast } from '../../lib/toast'
-import {
-  buildWechatOauthAuthorizeUrl,
-  createWechatOauthState,
-  detectSchoolOauthInput,
-} from '../../lib/schoolOauth'
+import { copyText } from '../../lib/clipboard'
+import { detectSchoolOauthInput } from '../../lib/schoolOauth'
 import Avatar from '../../components/Avatar.vue'
 
 const guests = ref<AdminGuest[]>([])
@@ -50,7 +48,8 @@ const cDates = ref<string[]>([defaultTodayPlus(1)])
 const cCallback = ref('')
 const cQrDataUrl = ref('')
 const cQrBuilding = ref(false)
-const cQrState = ref(createWechatOauthState())
+const cOAuthAttemptId = ref('')
+const cAuthorizationUrl = ref('')
 
 // --- edit modal state ---
 const editTarget = ref<AdminGuest | null>(null)
@@ -63,7 +62,8 @@ const refreshTarget = ref<AdminGuest | null>(null)
 const rCallback = ref('')
 const rQrDataUrl = ref('')
 const rQrBuilding = ref(false)
-const rQrState = ref(createWechatOauthState())
+const rOAuthAttemptId = ref('')
+const rAuthorizationUrl = ref('')
 const refreshing = ref(false)
 
 function defaultTodayPlus(n: number): string {
@@ -98,7 +98,6 @@ function openCreate() {
   cDormId.value = 0
   cDates.value = [defaultTodayPlus(1)]
   cCallback.value = ''
-  cQrState.value = createWechatOauthState()
   showCreate.value = true
   refreshQr()
 }
@@ -106,23 +105,30 @@ function openCreate() {
 async function refreshQr() {
   cQrBuilding.value = true
   try {
-    cQrState.value = createWechatOauthState()
-    cQrDataUrl.value = await QRCode.toDataURL(
-      buildWechatOauthAuthorizeUrl(cQrState.value),
-      { width: 240, margin: 1, errorCorrectionLevel: 'M' },
-    )
+    const prepared = await adminApi.prepareGuestOAuth()
+    await applyCreatePrepared(prepared)
   } catch (e: any) {
+    cOAuthAttemptId.value = ''
+    cAuthorizationUrl.value = ''
     cQrDataUrl.value = ''
-    showToast('err', e?.message || '二维码生成失败')
+    showToast('err', e?.message || '学校登录准备失败')
   } finally {
     cQrBuilding.value = false
   }
 }
 
+async function applyCreatePrepared(prepared: SchoolOAuthPrepared) {
+  cOAuthAttemptId.value = prepared.attemptId
+  cAuthorizationUrl.value = prepared.authorizationUrl
+  cQrDataUrl.value = await QRCode.toDataURL(prepared.authorizationUrl, {
+    width: 240,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  })
+}
+
 const cCallbackDetect = computed(() => detectSchoolOauthInput(cCallback.value))
-const cCallbackOk = computed(
-  () => cCallbackDetect.value.kind === 'code' || cCallbackDetect.value.kind === 'callback-url',
-)
+const cCallbackOk = computed(() => cCallbackDetect.value.kind === 'callback-url')
 
 function addCreateDate() {
   cDates.value.push(defaultTodayPlus(cDates.value.length + 1))
@@ -148,6 +154,7 @@ async function submitCreate() {
       signDates: cDates.value.filter(d => d.trim()),
       dormId: cDormId.value || undefined,
       callbackUrl: cCallback.value.trim(),
+      oauthAttemptId: cOAuthAttemptId.value,
     }
     await adminApi.createGuest(payload)
     showToast('ok', '已添加临时朋友')
@@ -202,23 +209,31 @@ async function openRefresh(g: AdminGuest) {
 async function rebuildRefreshQr() {
   rQrBuilding.value = true
   try {
-    rQrState.value = createWechatOauthState()
-    rQrDataUrl.value = await QRCode.toDataURL(
-      buildWechatOauthAuthorizeUrl(rQrState.value),
-      { width: 240, margin: 1, errorCorrectionLevel: 'M' },
-    )
+    if (!refreshTarget.value) return
+    const prepared = await adminApi.prepareUserTokenOAuth(refreshTarget.value.userId)
+    await applyRefreshPrepared(prepared)
   } catch (e: any) {
+    rOAuthAttemptId.value = ''
+    rAuthorizationUrl.value = ''
     rQrDataUrl.value = ''
-    showToast('err', e?.message || '二维码生成失败')
+    showToast('err', e?.message || '学校登录准备失败')
   } finally {
     rQrBuilding.value = false
   }
 }
 
+async function applyRefreshPrepared(prepared: SchoolOAuthPrepared) {
+  rOAuthAttemptId.value = prepared.attemptId
+  rAuthorizationUrl.value = prepared.authorizationUrl
+  rQrDataUrl.value = await QRCode.toDataURL(prepared.authorizationUrl, {
+    width: 240,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  })
+}
+
 const rCallbackDetect = computed(() => detectSchoolOauthInput(rCallback.value))
-const rCallbackOk = computed(
-  () => rCallbackDetect.value.kind === 'code' || rCallbackDetect.value.kind === 'callback-url',
-)
+const rCallbackOk = computed(() => rCallbackDetect.value.kind === 'callback-url')
 
 async function submitRefresh() {
   if (!refreshTarget.value || !rCallbackOk.value) return
@@ -226,6 +241,7 @@ async function submitRefresh() {
   try {
     await adminApi.refreshUserToken(refreshTarget.value.userId, {
       callbackUrl: rCallback.value.trim(),
+      oauthAttemptId: rOAuthAttemptId.value,
     })
     showToast('ok', `Token 已刷新（${refreshTarget.value.label}）`)
     refreshTarget.value = null
@@ -235,6 +251,16 @@ async function submitRefresh() {
   } finally {
     refreshing.value = false
   }
+}
+
+async function copyCreateAuthorizationUrl() {
+  const ok = await copyText(cAuthorizationUrl.value)
+  showToast(ok ? 'ok' : 'err', ok ? '授权链接已复制' : '复制失败')
+}
+
+async function copyRefreshAuthorizationUrl() {
+  const ok = await copyText(rAuthorizationUrl.value)
+  showToast(ok ? 'ok' : 'err', ok ? '授权链接已复制' : '复制失败')
 }
 
 watch(refreshTarget, v => {
@@ -591,7 +617,7 @@ watch(showCreate, v => {
                   ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
                   : 'bg-white/80 dark:bg-zinc-900/80 text-zinc-700 dark:text-zinc-300 ring-1 ring-black/[0.08] dark:ring-white/[0.06] hover:ring-emerald-500/40'"
               class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors shrink-0"
-              :title="tokenUrgency(g) === 'expired' ? '立即刷新（已失效）' : '让朋友重新扫码以刷新 Token'"
+              :title="tokenUrgency(g) === 'expired' ? '立即刷新（已失效）' : '让本人重新授权以刷新 Token'"
             >
               <RefreshCw class="w-3 h-3" />
               刷新
@@ -719,7 +745,7 @@ watch(showCreate, v => {
             <div class="rounded-xl bg-white/70 dark:bg-zinc-950/70 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3">
               <div class="flex items-center gap-2 mb-2">
                 <QrCodeIcon class="w-3.5 h-3.5 text-zinc-500" />
-                <span class="text-xs text-zinc-500">把这个二维码截图发给朋友</span>
+                <span class="text-xs text-zinc-500">电脑微信授权（本轮约 5 分钟有效）</span>
               </div>
               <div class="flex flex-col sm:flex-row gap-3">
                 <div class="shrink-0 self-center sm:self-start">
@@ -730,15 +756,20 @@ watch(showCreate, v => {
                 </div>
                 <div class="min-w-0 flex-1">
                   <ol class="text-[11px] text-zinc-600 dark:text-zinc-400 space-y-1 list-decimal list-inside leading-relaxed">
-                    <li>截图二维码 → 微信发给朋友</li>
-                    <li>朋友<strong>微信</strong>扫码 → 学校晚归页面 → 正常登录</li>
-                    <li>登录成功后，朋友点页面<strong>右上角「⋯」</strong>→ <strong>「复制链接」</strong></li>
-                    <li>朋友把链接发回给你，你粘到下面 ↓</li>
+                    <li>复制本轮授权链接发给朋友</li>
+                    <li>朋友在<strong>电脑微信</strong>打开并授权</li>
+                    <li>看到学校图片页后复制完整链接</li>
+                    <li>朋友把链接发回，你粘到下面 ↓</li>
                   </ol>
+                  <button type="button" @click="copyCreateAuthorizationUrl" :disabled="!cAuthorizationUrl"
+                    class="mt-2 mr-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors disabled:opacity-50">
+                    <Copy class="w-3 h-3" />
+                    复制授权链接
+                  </button>
                   <button type="button" @click="refreshQr"
                     class="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors">
                     <RefreshCw class="w-3 h-3" />
-                    刷新二维码
+                    重新生成
                   </button>
                 </div>
               </div>
@@ -748,22 +779,17 @@ watch(showCreate, v => {
             <div>
               <label class="block text-xs text-zinc-500 mb-1.5">把朋友给的回调链接粘到这里 *</label>
               <textarea v-model="cCallback"
-                placeholder="https://xhbcs.henau.edu.cn/?code=...&state=..."
+                placeholder="https://xhbcs.henau.edu.cn/农大白.png?code=EXAMPLE&state=EXAMPLE"
                 class="w-full bg-white dark:bg-zinc-950 ring-1 ring-emerald-500/30 focus:!ring-emerald-500/60 rounded-lg px-3 py-2 h-20 resize-none text-sm font-mono-token text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus-ring" />
               <div v-if="cCallbackDetect.kind === 'callback-url'"
                 class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-emerald-400 bg-emerald-500/10">
                 <Check class="w-3 h-3" />
                 已识别回调链接
               </div>
-              <div v-else-if="cCallbackDetect.kind === 'code'"
-                class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-emerald-400 bg-emerald-500/10">
-                <Check class="w-3 h-3" />
-                已识别 code
-              </div>
               <div v-else-if="cCallbackDetect.kind === 'invalid' && cCallback.trim()"
                 class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-amber-400 bg-amber-500/10">
                 <AlertCircle class="w-3 h-3" />
-                没识别到 code，请检查链接
+                请粘贴本轮学校图片页的完整回调 URL
               </div>
             </div>
           </div>
@@ -861,7 +887,7 @@ watch(showCreate, v => {
 
           <div class="p-5 space-y-4">
             <div class="rounded-lg bg-amber-500/10 ring-1 ring-amber-500/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-              学校 JWT 通常 ~7 天过期。让朋友<strong>重新扫这个二维码</strong>，把回调链接发回给你粘到下面。
+              学校 JWT 通常 ~7 天过期。让本人在<strong>电脑微信</strong>打开本轮授权链接，把学校图片页的完整回调 URL 发回。
               新 Token 的学号必须是 <span class="font-mono-token">{{ refreshTarget.userNumber }}</span>，否则会被拒绝。
             </div>
 
@@ -882,7 +908,7 @@ watch(showCreate, v => {
             <div class="rounded-xl bg-white/70 dark:bg-zinc-950/70 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3">
               <div class="flex items-center gap-2 mb-2">
                 <QrCodeIcon class="w-3.5 h-3.5 text-zinc-500" />
-                <span class="text-xs text-zinc-500">截图发给朋友</span>
+                <span class="text-xs text-zinc-500">本轮授权（约 5 分钟有效）</span>
               </div>
               <div class="flex flex-col sm:flex-row gap-3">
                 <div class="shrink-0 self-center sm:self-start">
@@ -893,15 +919,20 @@ watch(showCreate, v => {
                 </div>
                 <div class="min-w-0 flex-1">
                   <ol class="text-[11px] text-zinc-600 dark:text-zinc-400 space-y-1 list-decimal list-inside leading-relaxed">
-                    <li>截图发给朋友（同一个朋友，<strong>不要换人</strong>）</li>
-                    <li>朋友微信扫码 → 学校晚归页面登录</li>
-                    <li>登录后右上「⋯」→「复制链接」→ 发回</li>
-                    <li>粘到下面 ↓</li>
+                    <li>复制链接发给本人（<strong>不要换人</strong>）</li>
+                    <li>本人在电脑微信打开并授权</li>
+                    <li>看到学校图片页后复制完整链接发回</li>
+                    <li>粘到下面；纯 code 不可用</li>
                   </ol>
+                  <button type="button" @click="copyRefreshAuthorizationUrl" :disabled="!rAuthorizationUrl"
+                    class="mt-2 mr-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors disabled:opacity-50">
+                    <Copy class="w-3 h-3" />
+                    复制授权链接
+                  </button>
                   <button type="button" @click="rebuildRefreshQr"
                     class="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors">
                     <RefreshCw class="w-3 h-3" />
-                    刷新二维码
+                    重新生成
                   </button>
                 </div>
               </div>
@@ -911,22 +942,17 @@ watch(showCreate, v => {
             <div>
               <label class="block text-xs text-zinc-500 mb-1.5">把朋友给的回调链接粘到这里 *</label>
               <textarea v-model="rCallback"
-                placeholder="https://xhbcs.henau.edu.cn/?code=...&state=..."
+                placeholder="https://xhbcs.henau.edu.cn/农大白.png?code=EXAMPLE&state=EXAMPLE"
                 class="w-full bg-white dark:bg-zinc-950 ring-1 ring-emerald-500/30 focus:!ring-emerald-500/60 rounded-lg px-3 py-2 h-20 resize-none text-sm font-mono-token text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus-ring" />
               <div v-if="rCallbackDetect.kind === 'callback-url'"
                 class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-emerald-400 bg-emerald-500/10">
                 <Check class="w-3 h-3" />
                 已识别回调链接
               </div>
-              <div v-else-if="rCallbackDetect.kind === 'code'"
-                class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-emerald-400 bg-emerald-500/10">
-                <Check class="w-3 h-3" />
-                已识别 code
-              </div>
               <div v-else-if="rCallbackDetect.kind === 'invalid' && rCallback.trim()"
                 class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-amber-400 bg-amber-500/10">
                 <AlertCircle class="w-3 h-3" />
-                没识别到 code，请检查链接
+                请粘贴本轮学校图片页的完整回调 URL
               </div>
             </div>
           </div>

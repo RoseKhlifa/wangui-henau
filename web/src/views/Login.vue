@@ -17,16 +17,14 @@ import {
   ShieldCheck,
   QrCode,
   RefreshCw,
+  Copy,
 } from 'lucide-vue-next'
 import Logo from '../components/Logo.vue'
-import { api } from '../api'
+import { api, type SchoolOAuthPrepared } from '../api'
 import { useAuth } from '../stores/auth'
 import { showToast } from '../lib/toast'
-import {
-  buildWechatOauthAuthorizeUrl,
-  createWechatOauthState,
-  detectSchoolOauthInput,
-} from '../lib/schoolOauth'
+import { copyText } from '../lib/clipboard'
+import { detectSchoolOauthInput } from '../lib/schoolOauth'
 
 const router = useRouter()
 const route = useRoute()
@@ -56,7 +54,8 @@ const agreed = ref(localStorage.getItem('wangui:disclaimer') === 'yes')
 const showDisclaimerDetail = ref(false)
 const showLegacyToken = ref(false)
 const wechatQrDataUrl = ref('')
-const wechatState = ref(createWechatOauthState())
+const wechatAttemptId = ref('')
+const wechatAuthorizationUrl = ref('')
 const buildingWechatQr = ref(false)
 
 // Disclaimer must be expanded for a few seconds before the user is allowed
@@ -108,12 +107,7 @@ const disclaimerItems = [
 
 const isPinValid = (p: string) => /^\d{4,6}$/.test(p)
 const callbackDetection = computed(() => detectSchoolOauthInput(callbackUrl.value))
-const callbackLooksValid = computed(
-  () =>
-    callbackDetection.value.kind === 'code' ||
-    callbackDetection.value.kind === 'callback-url',
-)
-const callbackCodePreview = computed(() => shortCode(callbackDetection.value.code))
+const callbackLooksValid = computed(() => callbackDetection.value.kind === 'callback-url')
 
 const canSubmit = computed(() => {
   if (submitting.value || precheckLoading.value) return false
@@ -149,9 +143,9 @@ async function submit() {
   if (mode.value === 'activate' && activateStep.value === 'credentials') {
     precheckLoading.value = true
     try {
-      await api.activatePrecheck(inviteCode.value.trim().toUpperCase())
+      const prepared = await api.activatePrecheck(inviteCode.value.trim().toUpperCase())
       activateStep.value = 'token'
-      await refreshWechatQr()
+      await applyWechatPrepared(prepared)
     } catch (e: any) {
       error.value = e.message || '邀请码校验失败'
     } finally {
@@ -172,8 +166,8 @@ async function submit() {
         true,
         {
           token: token.value.trim() || undefined,
-          oauthCode: callbackDetection.value.code || undefined,
           callbackUrl: callbackUrl.value.trim() || undefined,
+          oauthAttemptId: wechatAttemptId.value || undefined,
         },
       )
       localStorage.setItem('wangui:disclaimer', 'yes')
@@ -208,33 +202,38 @@ function pinDigits(s: string): string {
   return s.replace(/\D/g, '').slice(0, 6)
 }
 
-function shortCode(s: string): string {
-  if (!s) return ''
-  if (s.length <= 14) return s
-  return `${s.slice(0, 6)}...${s.slice(-6)}`
-}
-
 async function refreshWechatQr() {
   buildingWechatQr.value = true
   try {
-    wechatState.value = createWechatOauthState()
-    const url = buildWechatOauthAuthorizeUrl(wechatState.value)
-    wechatQrDataUrl.value = await QRCode.toDataURL(url, {
-      width: 240,
-      margin: 1,
-      errorCorrectionLevel: 'M',
-    })
+    const prepared = await api.activatePrecheck(inviteCode.value.trim().toUpperCase())
+    await applyWechatPrepared(prepared)
   } catch (e: any) {
+    wechatAttemptId.value = ''
+    wechatAuthorizationUrl.value = ''
     wechatQrDataUrl.value = ''
-    showToast('err', e?.message || '二维码生成失败')
+    showToast('err', e?.message || '学校登录准备失败')
   } finally {
     buildingWechatQr.value = false
   }
 }
 
+async function applyWechatPrepared(prepared: SchoolOAuthPrepared) {
+  wechatAttemptId.value = prepared.attemptId
+  wechatAuthorizationUrl.value = prepared.authorizationUrl
+  wechatQrDataUrl.value = await QRCode.toDataURL(prepared.authorizationUrl, {
+    width: 240,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  })
+}
+
+async function copyWechatAuthorizationUrl() {
+  const ok = await copyText(wechatAuthorizationUrl.value)
+  showToast(ok ? 'ok' : 'err', ok ? '授权链接已复制' : '复制失败')
+}
+
 onMounted(async () => {
   await auth.init()
-  await refreshWechatQr()
 
   // Legacy tokengrab handoff keeps the JWT in the URL fragment so it does not
   // land in Referer headers or server access logs. Format:
@@ -374,7 +373,7 @@ onMounted(async () => {
 
         <!-- Activate form -->
         <div v-else class="p-6">
-          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-5">首次使用，用邀请码 + 微信扫码登录晚归页面完成激活，并设置登录 PIN</p>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-5">首次使用，用邀请码 + 电脑微信授权完成激活，并设置登录 PIN</p>
 
           <div class="space-y-4">
             <!-- Step indicator: shown only in activate flow. Random visitors
@@ -538,7 +537,7 @@ onMounted(async () => {
               <div>
                 <label class="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
                   <QrCode class="w-3.5 h-3.5" />
-                  微信扫码获取学校 Token
+                  电脑微信授权获取学校 Token
                 </label>
                 <div class="rounded-xl bg-white/70 dark:bg-zinc-950/70 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3">
                 <div class="flex flex-col sm:flex-row gap-4">
@@ -547,7 +546,7 @@ onMounted(async () => {
                       <img
                         v-if="wechatQrDataUrl"
                         :src="wechatQrDataUrl"
-                        alt="微信扫码授权二维码"
+                        alt="本轮微信授权链接二维码"
                         class="w-full h-full object-contain"
                       />
                       <div v-else class="text-[11px] text-zinc-400 text-center px-2">
@@ -557,19 +556,28 @@ onMounted(async () => {
                   </div>
                   <div class="min-w-0 flex-1">
                     <ol class="text-[12px] text-zinc-700 dark:text-zinc-300 space-y-2 list-decimal list-inside leading-relaxed">
-                      <li>用手机<strong>微信</strong>扫左边二维码</li>
-                      <li>会自动跳到学校晚归页面，<strong>正常登录</strong>就行</li>
-                      <li>登录成功后，点页面<strong>右上角「⋯」</strong>→ 选<strong>「复制链接」</strong></li>
-                      <li>回到这里，把链接<strong>粘到下方输入框</strong>，提交完成</li>
+                      <li>复制本轮授权链接，发送给自己的<strong>电脑微信</strong></li>
+                      <li>在电脑微信中打开链接并完成授权</li>
+                      <li>看到学校图片页后，右上「⋯」→「复制链接」</li>
+                      <li>把完整链接粘到下方；本轮链接约 5 分钟有效</li>
                     </ol>
                     <div class="mt-3">
+                      <button
+                        type="button"
+                        @click="copyWechatAuthorizationUrl"
+                        :disabled="!wechatAuthorizationUrl"
+                        class="mr-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors disabled:opacity-50"
+                      >
+                        <Copy class="w-3 h-3" />
+                        复制授权链接
+                      </button>
                       <button
                         type="button"
                         @click="refreshWechatQr"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-zinc-700 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/80 ring-1 ring-black/[0.06] dark:ring-white/[0.05] hover:ring-emerald-500/40 transition-colors"
                       >
                         <RefreshCw class="w-3 h-3" />
-                        刷新二维码
+                        重新生成本轮链接
                       </button>
                     </div>
                   </div>
@@ -580,21 +588,16 @@ onMounted(async () => {
                   <div>
                     <label class="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                       <KeyRound class="w-4 h-4 text-emerald-400" />
-                      把手机里的回调链接或 code 直接贴这里
+                      把电脑微信复制的完整回调链接贴这里
                     </label>
                     <p class="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                      支持整段 <code class="bg-white/80 dark:bg-zinc-900/80 px-1 rounded text-zinc-700 dark:text-zinc-300">https://xhbcs.henau.edu.cn/?code=...</code>
-                      、只复制
-                      <code class="bg-white/80 dark:bg-zinc-900/80 px-1 rounded text-zinc-700 dark:text-zinc-300">?code=...</code>
-                      ，或直接贴纯
-                      <code class="bg-white/80 dark:bg-zinc-900/80 px-1 rounded text-zinc-700 dark:text-zinc-300">code</code>
-                      。
+                      必须是学校图片页的完整 HTTPS URL，并同时包含本轮唯一的 code 和 state；纯 code 无法保留本轮校验信息。
                     </p>
                   </div>
                 </div>
                 <textarea
                   v-model="callbackUrl"
-                  placeholder="示例：https://xhbcs.henau.edu.cn/?code=001B8Zfa1NMRHL0m65la1gbfBa3B8ZFy&state=STATE#/checkin"
+                  placeholder="https://xhbcs.henau.edu.cn/农大白.png?code=EXAMPLE&state=EXAMPLE"
                   class="mt-3 w-full bg-white dark:bg-zinc-950 ring-2 ring-emerald-500/25 focus:!ring-emerald-500/55 rounded-xl px-3 py-3 h-32 resize-none text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus-ring"
                 />
                 <div
@@ -602,21 +605,14 @@ onMounted(async () => {
                   class="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/12 px-2.5 py-1.5 text-[11px] text-emerald-500"
                 >
                   <Check class="w-3.5 h-3.5" />
-                  已识别整段回调链接，将自动提取 code：{{ callbackCodePreview }}
-                </div>
-                <div
-                  v-else-if="callbackDetection.kind === 'code'"
-                  class="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/12 px-2.5 py-1.5 text-[11px] text-emerald-500"
-                >
-                  <Check class="w-3.5 h-3.5" />
-                  已识别为 code：{{ callbackCodePreview }}
+                  已识别学校图片回调，将由服务端核对本轮 state
                 </div>
                 <div
                   v-else-if="callbackDetection.kind === 'invalid' && callbackUrl.trim()"
                   class="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/12 px-2.5 py-1.5 text-[11px] text-amber-400"
                 >
                   <AlertCircle class="w-3.5 h-3.5" />
-                  没识别到 code。请粘贴整段回调链接、`?code=...` 或纯 code。
+                  回调格式不正确，请粘贴电脑微信复制的完整学校图片 URL。
                 </div>
               </div>
 
@@ -632,7 +628,7 @@ onMounted(async () => {
                   v-if="showLegacyToken"
                   class="mt-2 overflow-hidden rounded-lg bg-white/70 dark:bg-zinc-950/70 ring-1 ring-black/[0.05] dark:ring-white/[0.04] p-3"
                 >
-                  <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">仅在扫码流程异常时使用，直接粘贴学校 JWT。</p>
+                  <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">仅在授权流程异常时使用，直接粘贴学校 JWT。</p>
                   <textarea
                     v-model="token"
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."

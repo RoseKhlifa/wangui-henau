@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 )
 
@@ -30,18 +31,61 @@ type User struct {
 
 type OAuth2LoginData struct {
 	AccessToken string `json:"accessToken"`
-	IsNewUser   bool   `json:"isNewUser"`
+	IsNewUser   *bool  `json:"isNewUser"`
 }
 
-// OAuth2Login exchanges a WeChat OAuth callback code for the school's JWT.
-func (c *Client) OAuth2Login(ctx context.Context, code string) (*OAuth2LoginData, error) {
+type OAuth2PrepareData struct {
+	State string `json:"state"`
+}
+
+// NewOAuth creates an unauthenticated client with an isolated cookie jar.
+// One instance must be retained for the entire prepare -> login -> verify
+// attempt so the school's short-lived session cookies are preserved.
+func NewOAuth() *Client {
+	c := New("")
+	jar, _ := cookiejar.New(nil)
+	c.HTTP.Jar = jar
+	return c
+}
+
+// ClearCookies destroys the transient school session held by this client.
+func (c *Client) ClearCookies() {
+	if c.HTTP == nil {
+		return
+	}
+	jar, _ := cookiejar.New(nil)
+	c.HTTP.Jar = jar
+}
+
+// OAuth2Prepare starts one school-side OAuth attempt and stores the returned
+// cookies in this client's jar.
+func (c *Client) OAuth2Prepare(ctx context.Context) (*OAuth2PrepareData, error) {
+	var out OAuth2PrepareData
+	if err := c.do(ctx, http.MethodPost, "/auth/oauth2/prepare", nil, map[string]any{}, &out); err != nil {
+		return nil, err
+	}
+	out.State = strings.TrimSpace(out.State)
+	if out.State == "" {
+		return nil, errors.New("oauth2 prepare returned an empty state")
+	}
+	return &out, nil
+}
+
+// OAuth2Login exchanges a fresh callback code and its school-issued state for
+// the school's JWT. It must use the same Client instance as OAuth2Prepare.
+func (c *Client) OAuth2Login(ctx context.Context, code, state string) (*OAuth2LoginData, error) {
 	code = strings.TrimSpace(code)
+	state = strings.TrimSpace(state)
 	if code == "" {
 		return nil, errors.New("oauth2 code is empty")
 	}
+	if state == "" {
+		return nil, errors.New("oauth2 state is empty")
+	}
 	var out OAuth2LoginData
 	if err := c.do(ctx, http.MethodPost, "/auth/oauth2/login", nil, map[string]string{
-		"code": code,
+		"code":  code,
+		"state": state,
 	}, &out); err != nil {
 		return nil, err
 	}

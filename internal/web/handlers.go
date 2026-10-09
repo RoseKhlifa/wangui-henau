@@ -27,11 +27,12 @@ var pinPattern = regexp.MustCompile(`^\d{4,6}$`)
 func validPin(s string) bool { return pinPattern.MatchString(s) }
 
 type handlers struct {
-	store     *store.Store
-	sched     *scheduler.Multi
-	bus       *events.Bus
-	log       *slog.Logger
-	adminPass string // plain text from env; empty means admin disabled
+	store       *store.Store
+	sched       *scheduler.Multi
+	bus         *events.Bus
+	log         *slog.Logger
+	adminPass   string // plain text from env; empty means admin disabled
+	schoolOAuth *schoolOAuthManager
 
 	loginLimiter *rateLimiter // per-IP rate limit for POST /login (and /activate)
 }
@@ -152,13 +153,24 @@ func (h *handlers) activatePrecheck(w http.ResponseWriter, r *http.Request) {
 	// them through with a heads-up. The real check happens in /activate,
 	// which compares the school-returned user_id to the existing binding.
 	if c.BoundUserID != nil && *c.BoundUserID != "" {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":   true,
-			"note": "该邀请码已被使用过。如你是原激活人想重新激活，可以继续；否则将被拒绝。",
-		})
+		// A bound code may still be reactivated by its original owner. The
+		// identity check remains in /activate after OAuth completes.
+	}
+	prepared, err := h.schoolOAuth.prepare(r.Context(), activationOAuthAudience(code))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	out := map[string]any{
+		"ok":               true,
+		"attemptId":        prepared.AttemptID,
+		"authorizationUrl": prepared.AuthorizationURL,
+		"expiresAt":        prepared.ExpiresAt,
+	}
+	if c.BoundUserID != nil && *c.BoundUserID != "" {
+		out["note"] = "该邀请码已被使用过。如你是原激活人想重新激活，可以继续；否则将被拒绝。"
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---------- POST /api/v1/activate ----------
@@ -202,7 +214,7 @@ func (h *handlers) activate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	auth, status, err := h.resolveSchoolAuth(ctx, req.schoolAuthInput)
+	auth, status, err := h.resolveSchoolAuth(ctx, req.schoolAuthInput, activationOAuthAudience(code))
 	if err != nil {
 		writeErr(w, status, err.Error())
 		return
@@ -468,7 +480,7 @@ func (h *handlers) updateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	auth, status, err := h.resolveSchoolAuth(ctx, req)
+	auth, status, err := h.resolveSchoolAuth(ctx, req, userOAuthAudience(uid))
 	if err != nil {
 		writeErr(w, status, err.Error())
 		return

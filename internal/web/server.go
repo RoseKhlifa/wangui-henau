@@ -45,6 +45,7 @@ func (s *Server) Run(ctx context.Context) error {
 		bus:          s.Bus,
 		log:          s.Logger,
 		adminPass:    s.AdminPass,
+		schoolOAuth:  newSchoolOAuthManager(),
 		loginLimiter: newRateLimiter(5, time.Minute),
 	}
 
@@ -66,6 +67,7 @@ func (s *Server) Run(ctx context.Context) error {
 		r.Group(func(r chi.Router) {
 			r.Use(h.userAuth)
 			r.Get("/me", h.me)
+			r.Post("/token/oauth/prepare", h.prepareUserTokenOAuth)
 			r.Put("/token", h.updateToken)
 			r.Put("/pin", h.changePin)
 			r.Get("/settings", h.getSettings)
@@ -97,6 +99,7 @@ func (s *Server) Run(ctx context.Context) error {
 			r.Put("/users/{id}", h.adminUpdateUser)
 			r.Post("/users/{id}/pin", h.adminResetUserPin)
 			r.Post("/users/{id}/token", h.adminRefreshUserToken)
+			r.Post("/users/{id}/token/oauth/prepare", h.prepareAdminUserTokenOAuth)
 			r.Post("/users/{id}/sign-now", h.adminSignNowForUser)
 			r.Get("/users/{id}/checkin-status", h.adminCheckinStatusForUser)
 			r.Delete("/users/{id}", h.adminDeleteUser)
@@ -108,6 +111,7 @@ func (s *Server) Run(ctx context.Context) error {
 			r.Get("/dorms/{id}/users", h.adminDormUsers)
 
 			r.Get("/guests", h.adminListGuests)
+			r.Post("/guests/oauth/prepare", h.prepareAdminGuestOAuth)
 			r.Post("/guests", h.adminCreateGuest)
 			r.Put("/guests/{id}", h.adminUpdateGuest)
 			r.Delete("/guests/{id}", h.adminDeleteGuest)

@@ -371,7 +371,7 @@ const u = computed(() => props.user)
               ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
               : 'bg-white/80 dark:bg-zinc-900/80 text-zinc-700 dark:text-zinc-300 ring-1 ring-black/[0.08] dark:ring-white/[0.06] hover:ring-emerald-500/40'"
           class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors shrink-0"
-          title="让朋友重新扫码以刷新 Token"
+          title="让本人重新授权以刷新 Token"
         >
           <RefreshCw class="w-3 h-3" />
           刷新

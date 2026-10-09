@@ -446,7 +446,7 @@ func renderTokenWarnEmail(u *store.User, hoursLeft int) (subject, text, html str
 	human := humanHours(hoursLeft)
 	subject = fmt.Sprintf("[勿外传] Token 即将过期 · %s · 剩 %s", u.UserName, human)
 	text = fmt.Sprintf(
-		"姓名：%s\n学号：%s\n剩余：%s\n到期时间：%s\n\n请尽快打开 wangui 的「账号」页重新扫码刷新 Token。\n",
+		"姓名：%s\n学号：%s\n剩余：%s\n到期时间：%s\n\n请尽快打开 wangui 的「账号」页，在电脑微信重新授权并刷新 Token。\n",
 		u.UserName, u.UserNumber, human, u.TokenExp.Format("2006-01-02 15:04"),
 	)
 	html = fmt.Sprintf(`<!doctype html><html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#fafafa;padding:24px;color:#18181b;">
@@ -461,7 +461,7 @@ func renderTokenWarnEmail(u *store.User, hoursLeft int) (subject, text, html str
     <div><strong style="color:#71717a;">剩余</strong>　<span style="color:#d97706;font-weight:600;">%s</span></div>
     <div><strong style="color:#71717a;">到期</strong>　%s</div>
     <div style="margin-top:14px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-      请尽快打开 wangui 站点，进入「账号」页重新扫码刷新 Token，否则到期后将无法自动签到。
+      请尽快打开 wangui 站点，进入「账号」页，在电脑微信重新授权并刷新 Token，否则到期后将无法自动签到。
     </div>
   </div>
   <div style="padding:12px 22px;font-size:11px;color:#a1a1aa;background:#fafafa;border-top:1px solid #e5e7eb;">
@@ -476,7 +476,7 @@ func renderTokenWarnServerChan(u *store.User, hoursLeft int) (title, body string
 	human := humanHours(hoursLeft)
 	title = fmt.Sprintf("⚠️ Token 即将过期 · %s · 剩 %s", u.UserName, human)
 	body = fmt.Sprintf(
-		"**姓名**：%s\n\n**学号**：`%s`\n\n**剩余**：%s\n\n**到期**：%s\n\n请尽快打开 wangui 「账号」页重新扫码刷新，否则将无法自动签到。",
+		"**姓名**：%s\n\n**学号**：`%s`\n\n**剩余**：%s\n\n**到期**：%s\n\n请尽快打开 wangui 「账号」页，在电脑微信重新授权并刷新 Token，否则将无法自动签到。",
 		u.UserName, u.UserNumber, human, u.TokenExp.Format("2006-01-02 15:04"),
 	)
 	body = withTagline(body, taglineForTokenWarn())
